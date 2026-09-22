@@ -9,18 +9,18 @@
 - GET /eat?mb=N — выделяет N мегабайт памяти и держит их;
 - GET /burn — нагружает одно ядро CPU в бесконечном цикле
 
-    ![alt text](image-3.png)
+    ![alt text](src/image-3.png)
 
 ## Часть 1 — Запуск напрямую
 Запустим сервис напрямую на устройстве через команду
 ```
 uvicorn app:app --app-dir pr1-docker/python-app/ --host 0.0.0.0 --port 8000
 ```
-![alt text](image.png)
+![alt text](src/image.png)
 Все работает корректно
-![alt text](image-1.png)
+![alt text](src/image-1.png)
 Посмотрим процесс в ps на хосте
-![alt text](image-2.png)
+![alt text](src/image-2.png)
 На данный момент изоляции нет, процесс видит всю систему
 
 ## Часть 2 — namespaces
