@@ -16,6 +16,7 @@ import asyncio
 import os
 import threading
 from typing import Any
+import errno
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
@@ -168,3 +169,19 @@ async def cool() -> dict[str, int]:
     await asyncio.sleep(0.1)
 
     return {"stopped_burners": stopped}
+
+# ---------------------------------------------------------------------------
+# GET /test-mkdir — попытка создать директорию
+# ---------------------------------------------------------------------------
+@app.get("/test-mkdir")
+def test_mkdir():
+    try:
+        os.mkdir("/tmp/from-app")
+        return {"result": "mkdir OK — фильтр НЕ работает"}
+    except OSError as e:
+        return {
+            "result": "mkdir blocked",
+            "errno": e.errno,
+            "errno_name": errno.errorcode.get(e.errno),
+            "strerror": e.strerror,
+        }

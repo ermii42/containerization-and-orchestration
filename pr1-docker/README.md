@@ -37,7 +37,7 @@ unshare --user --map-root-user --pid --mount --net --uts --ipc --fork --mount-pr
 
 Для Ubuntu 24.04 и новее можно разрешить создание user namespaces с помощью команды:
 ```
-sudo sysctl -w kernel.unprivileged_userns_clone=0
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 ```
 Запускаем еще раз и все работает!
 ![alt text](image-1.png)
@@ -50,7 +50,7 @@ sudo sysctl -w kernel.unprivileged_userns_clone=0
 ![alt text](image-3.png)
 Заходим внутрь процесса 
 ```
-sudo nsenter -t PID -p -m -u -i -n -- /bin/bash
+sudo nsenter -t $PID -p -m -u -i -n -- /bin/bash
 ```
 ![alt text](image-4.png)
 Флаги -p -m -u -i -n означают, что мы подключаемся к PID, Mount, User, IPC и NET namespace'ам целевого процесса
@@ -125,14 +125,14 @@ sudo ip link set veth-cont netns $PID
 Настраиваем IP-адреса и поднимаем интерфейсы
 На хосте:
 ```
-sudo ip addr add 10.0.0.43/24 dev veth-host
+sudo ip addr add 192.168.100.1/24 dev veth-host
 ```
 ```
 sudo ip link set veth-host up
 ```
 Внутри неймспейса
 ```
-ip addr add 10.0.0.42/24 dev veth-cont
+ip addr add 192.168.100.2/24 dev veth-cont
 ```
 ```
 ip link set veth-cont up
@@ -144,7 +144,7 @@ ip link set lo up
 
 Теперь с хоста можно стучаться по новому IP, вызываем OOM через эндпоинт /eat, Пытаемся съесть 150MB (больше лимита)
 ```
-curl http://10.0.0.42:8000/eat?mb=150
+curl http://192.168.100.2/eat?mb=150
 ```
 На хосте
 ![alt text](image-12.png)
@@ -221,11 +221,52 @@ cat /sys/fs/cgroup/myapp2/pids.events
 ```
 ![alt text](image-20.png)
 ## Часть 4 — права
-Оставь процессу только нужный минимум:
+### Сброс лишних capabilities
+Используем setpriv для сброса bounding set — это ограничивает набор capabilities, которые процесс может получить даже через execve.
+```
+unshare --user --map-root-user --pid --mount --net --uts --ipc --fork --mount-proc \
+  setpriv --inh-caps=-all --bounding-set=-all --no-new-privs \
+  "$PWD/.venv/bin/python" -m uvicorn app:app --app-dir pr1-docker/python-app/ --host 0.0.0.0 --port 8000
+```
+--inh-caps=-all — очищает inheritable set (набор, который может передаваться дальше).
 
-сбрось лишние capabilities и покажи, что привилегированное действие (например, смена системного времени) больше не проходит;
-навесь seccomp-профиль и покажи, что заблокированный системный вызов отклоняется.
-Опиши, что закрывает каждый механизм.
+--bounding-set=-all — удаляет capabilities из bounding set. Это критично: даже если процесс получит setuid-бинарник, он не сможет вернуть выброшенные capabilities.
+
+--no-new-privs — запрещает любые попытки повышения привилегий через execve (игнорирует setuid/setgid-биты и file capabilities)
+
+Проверка capabilities процесса:
+```
+grep -E "Cap(Eff|Prm|Bnd|Amb)" /proc/$PID/status
+```
+![alt text](image-22.png)
+
+### Seccomp-профиль
+Seccomp — это фильтр на уровне ядра, который перехватывает системные вызовы (syscalls). Даже если у процесса есть root-права и все мандаты, seccomp может запретить ему вызывать конкретные syscall'ы (например, reboot, mount, ptrace, mkdir). Это критически важно для предотвращения побега из контейнера (container escape).
+
+Так как unshare не умеет загружать BPF-фильтры seccomp из CLI, мы сделаем это на уровне Python перед стартом Uvicorn.
+
+Самый надежный и "чистый" способ применить seccomp в Python без установки специфических системных пакетов — использовать встроенный модуль ctypes для прямого вызова системной библиотеки libseccomp (она уже установлена в вашей системе, так как используется Docker, systemd и многими другими компонентами).
+
+Напишем wrapper.py, небольшой Python-скрипт-обертку, которая применит seccomp-фильтр.
+Также модифицируем скрипт для запуска
+```
+unshare --user --map-root-user --pid --mount --net --uts --ipc --fork --mount-proc \
+  setpriv --inh-caps=-all --bounding-set=-all --no-new-privs \
+  "$PWD/.venv/bin/python" "$PWD/pr1-docker/python-app/wrapper.py"
+```
+![alt text](image-23.png)
+
+Фильтры корректно применились
+
+![alt text](image-24.png)
+
+Проверим, выполняется ли mkdir
+```
+curl http://192.168.100.2:8000/test-mkdir
+```
+![alt text](image-25.png)
+
+mkdir корректно заблокирован))
 
 ## Часть 5 — Собери свой Docker
 Собери все команды из частей 2–4 в один скрипт (например, mydocker.sh), который одной командой запускает api в своих namespaces, с cgroup-лимитами и урезанными правами. Проверь, что сервис поднимается и /health отвечает.
