@@ -269,17 +269,116 @@ curl http://192.168.100.2:8000/test-mkdir
 mkdir корректно заблокирован))
 
 ## Часть 5 — Собери свой Docker
-Собери все команды из частей 2–4 в один скрипт (например, mydocker.sh), который одной командой запускает api в своих namespaces, с cgroup-лимитами и урезанными правами. Проверь, что сервис поднимается и /health отвечает.
+Соберем все команды из частей 2–4 в один скрипт (mydocker.sh), который одной командой запускает api в своих namespaces, с cgroup-лимитами и урезанными правами.
+Перед запуском скрипта дадим ему права на исполнение на хостовой машине
+```
+chmod +x pr1-docker/mydocker.sh
+```
+Запустим скрипт командой 
+```
+pr1-docker/mydocker.sh
+```
+Проверим, что сервис поднимается и /health отвечает.
+![alt text](image-27.png)
+![alt text](image-26.png)
 
-Теперь запусти тот же сервис через docker run и сравни с запуском своего скрипта: что совпадает, чего в твоём скрипте нет и что Docker делает сверх него. Сведи сравнение в README.
+ Сравним, что совпадает, чего в скрипте нет и что Docker делает сверх него
+
+|                             |                                                                     |                                                                                                 |
+|-----------------------------|---------------------------------------------------------------------|-------------------------------------------------------------------------------------------------|
+| Аспект                      | mydocker.sh                                                         | docker run                                                                                      |
+| Изоляция namespace          | user, pid, mount, net, uts, ipc — вручную через unshare             | автоматически: все namespace, кроме cgroup (и user — опционально)                               |
+| User namespace              | явно --map-root-user (root внутри = root снаружи)                   | по умолчанию не включён; root в контейнере = root на хосте, если не включён userns-remap        |
+| cgroup CPU                  | cpu.max = 50000 100000 (0.5 CPU)                                    | --cpus="0.5" — эквивалентно                                                                     |
+| cgroup PIDs                 | pids.max = 10                                                       | --pids-limit=10 — эквивалентно                                                                  |
+| Capabilities                | setpriv --inh-caps=-all --bounding-set=-all — все capability убраны | по умолчанию оставляет ~14 capability (CHOWN, NET_BIND_SERVICE, SETUID и т.д.)                  |
+| no-new-privs                | явно --no-new-privs                                                 | нужно указывать --security-opt=no-new-privs вручную                                             |
+| Seccomp                     | вручную через обертку wrapper.py                                                     | Docker применяет default seccomp profile, блокирует ~44 syscall (ptrace, mount, reboot и т.д.)  |
+| Сеть                        | вручную: veth pair, статические IP, nsenter                         | автоматически: bridge network, NAT, DNS                                                         |
+| Файловая система            | не изолируется (mount namespace есть, но rootfs не меняется)        | изолированный rootfs из образа, pivot_root                                                      |
+| Образ / rootfs              | используется хостовый rootfs                                        | отдельный rootfs из образа                                                                      |
+| Управление жизненным циклом | вручную (kill, ip link del)                                         | docker stop/rm/start/restart, healthcheck, restart policy                                       |
+| Логи                        | stdout/stderr процесса                                              | docker logs, драйверы логирования                                                               |
+| Порты                       | вручную: veth + статические IP                                      | -p / --publish, DNAT                                                                            |
+| Безопасность (по умолчанию) | сильнее: нет capabilities, есть no-new-privs                        | слабее по умолчанию: ~14 capability, root inside, нет no-new-privs                              |
+| Удобство                    | низкое: ручное управление PID, cgroup, сетью                        | высокое: одна команда                                                                           |
+
 
 ## Часть 6 — Образы
-Твоему скрипту не хватало готовой файловой системы — её и даёт образ.
+Скрипту не хватало готовой файловой системы — её и даёт образ.
 
-Напиши Dockerfile для api и собери образ.
-Сделай multi-stage-сборку с минимальной базой (для Go подойдёт scratch или distroless). Сравни размер, число слоёв и что переиспользовалось из кэша при повторной сборке.
-Запиши файл внутрь контейнера, пересоздай контейнер — файл пропал. Повтори с томом — файл остался.
+Напишем Dockerfile для api и соберем образ его и запустим с помощью команды.
 
+```
+sudo docker run -d \
+  --name myapi-docker \
+  --cpus="0.5" \
+  --pids-limit=10 \
+  -p 8000:8000 \
+  my-python-app:latest
+```
+![alt text](image-28.png)
+
+![alt text](image-29.png)
+
+![alt text](image-30.png)
+
+Сделем multi-stage-сборку с минимальной базой.
+Сравним размер
+```
+sudo docker images --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}' | grep my-python-app
+```
+![alt text](image-31.png)
+
+Число слоев
+```
+sudo docker image inspect my-python-app:single --format '{{len .RootFS.Layers}}'
+sudo docker image inspect my-python-app:multi  --format '{{len .RootFS.Layers}}'
+```
+![alt text](image-32.png)
+
+При пересборке приложения мы можем заметить, что
+В single-сборке закешировалось
+![alt text](image-33.png)
+В multistage сборке закешировалось
+![alt text](image-34.png)
+
+**Файл внутри контейнера: пропал после пересоздания**
+Записываем файл в контейнер
+```
+sudo docker run -d --name myapi-test my-python-app:multi
+sudo docker exec -u root myapi-test sh -c 'echo "hello" > /app/data.txt'
+sudo docker exec myapi-test cat /app/data.txt
+```
+![alt text](image-35.png)
+Удаляем и пересоздаём контейнер:
+```
+sudo docker rm -f myapi-test
+sudo docker run -d --name myapi-test my-python-app:multi
+sudo docker exec myapi-test cat /app/data.txt
+```
+![alt text](image-36.png)
+
+**Запускаем контейнер с томом**
+Создаём том и монтируем его в /app:
+
+```
+sudo docker volume create myapi-data
+sudo docker run -d --name myapi-test -v myapi-data:/app my-python-app:multi
+```
+![alt text](image-37.png)
+
+Записываем файл
+```
+sudo docker exec -u root myapi-test sh -c 'echo "hello" > /app/data.txt'
+```
+Удаляем и пересоздаём контейнер с тем же томом:
+```
+sudo docker rm -f myapi-test
+sudo docker run -d --name myapi-test -v myapi-data:/app my-python-app:multi
+sudo docker exec myapi-test cat /app/data.txt
+```
+![alt text](image-38.png)
 ## Часть 7 — Когда контейнера мало
 Запусти образ под gVisor (runsc) и сравни его изоляцию с обычным Docker и своим скриптом. Разберись, чем gVisor устроен иначе и почему его считают более изолированным. Отдельно ответь на вопрос: что у обычного контейнера остаётся общим с хостом в любом случае и почему это предел контейнерной изоляции. Выводы — в README.
 
