@@ -1,0 +1,35 @@
+# ---------- Stage 1: builder ----------
+FROM python:3.12 AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+# Зависимости в отдельную папку, чтобы потом скопировать одним слоем
+COPY ./requirements.txt .
+RUN pip install --prefix=/install -r requirements.txt
+
+# ---------- Stage 2: runtime ----------
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/install/bin:$PATH" \
+    PYTHONPATH="/install/lib/python3.12/site-packages"
+
+WORKDIR /app
+
+# Только готовые пакеты и код — без pip, без build-зависимостей
+COPY --from=builder /install /install
+COPY ./ .
+
+EXPOSE 8000
+
+# Непривилегированный пользователь
+RUN useradd -m -u 10001 appuser
+USER appuser
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
