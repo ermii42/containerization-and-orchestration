@@ -434,4 +434,38 @@ Add data source → выберем Prometheus.
 Внизу Save & test → должно быть «Data source is working».
  ```
  ![alt text](image-3.png)
- Далее импортируем дашборд
+ Далее импортируем дашборд 19792 (популярный дашборд для мониторинга контейнеров через cAdvisor)
+ ![alt text](image-4.png)
+
+ **Настроим метрики под алерты** через Grafana Alerting
+ Alerting → Alert rules → New alert rule
+ 1. CPU Throttling Ratio
+```
+sum(rate(container_cpu_cfs_throttled_periods_total{id!="/", id!="/init.scope"}[5m])) by (id)
+/
+sum(rate(container_cpu_cfs_periods_total{id!="/", id!="/init.scope"}[5m])) by (id)
+```
+Что ловит: долю периодов планировщика CFS, когда контейнер хотел использовать CPU, но был остановлен, потому что исчерпал лимит. Значение > 0.15 (15%) уже означает, что приложение регулярно «тормозит» .
+
+Чем грозит: приложение работает медленнее, чем могло бы, даже если потребление CPU выглядит низким (потому что throttling не дает ему «разогнаться»). Это классическая причина загадочных лагов и таймаутов в Kubernetes. Порог: WARN > 0.15 (10 мин), CRIT > 0.30 .
+
+2. Memory Working Set Utilization
+```
+max(container_memory_working_set_bytes) by (id)
+/
+container_spec_memory_limit_bytes > 0
+* 100
+```
+Что ловит: процент использования лимита памяти. Метрика working_set точнее, чем usage_bytes, потому что исключает кеш, который ядро может освободить .
+
+Чем грозит: при превышении лимита ядро убьет контейнер (OOMKill). Приложение упадет с exit code 137. Если это состояние длится долго, контейнер будет циклически перезапускаться. Порог: > 80% (5 мин) — предупреждение; > 95% (2 мин) — критично .
+
+3. CPU Usage Rate
+```
+max(rate(container_cpu_usage_seconds_total[5m])) by (id)
+/
+kube_pod_container_resource_limits{resource="cpu"} > 0
+```
+Что ловит: приближение к CPU-лимиту. Если rate близок к 1, контейнер вот-вот начнет throttled (см. алерт №1) .
+
+Чем грозит: без этого алерта ты узнаешь о проблеме только когда throttling уже ударил по latency. Он дает фору — можно успеть поднять лимит до того, как пользователи почувствуют деградацию. Порог: > 0.8 (1 мин) — warning; > 0.6 — мягкое предупреждение .
