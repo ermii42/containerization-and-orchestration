@@ -406,7 +406,7 @@ sudo docker-compose up -d
 sudo docker-compose ps
 curl http://localhost:8080/metrics | head -50
 ```
-![alt text](image3.png)
+![alt text](src/image3.png)
 
 **Настройка Prometheus**
  (файл prometheus.yml)
@@ -415,13 +415,13 @@ curl http://localhost:8080/metrics | head -50
  ```
  open http://localhost:9090/targets
  ```
- ![alt text](image3-1.png)
+ ![alt text](src/image3-1.png)
  
  Зайдем в графану (логин и пароль: admin)
  ```
  http://localhost:3000
  ```
- ![alt text](image3-2.png)
+ ![alt text](src/image3-2.png)
  
  Далее подключим Prometheus как datasource
  ```
@@ -433,13 +433,13 @@ Add data source → выберем Prometheus.
 
 Внизу Save & test → должно быть «Data source is working».
  ```
- ![alt text](image3-3.png)
+ ![alt text](src/image3-3.png)
  Далее импортируем дашборд 19792 (популярный дашборд для мониторинга контейнеров через cAdvisor)
- ![alt text](image3-4.png)
+ ![alt text](src/image3-4.png)
 
  **Настроим метрики под алерты** через Grafana Alerting
  Alerting → Alert rules → New alert rule
- ![alt text](image3-5.png)
+ ![alt text](src/image3-5.png)
  1. CPU Throttling Ratio
 ```
 sum(rate(container_cpu_cfs_throttled_periods_total{id!="/", id!="/init.scope"}[5m])) by (id)
