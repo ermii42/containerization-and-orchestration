@@ -9,18 +9,18 @@
 - GET /eat?mb=N — выделяет N мегабайт памяти и держит их;
 - GET /burn — нагружает одно ядро CPU в бесконечном цикле
 
-    ![alt text](src/image-3.png)
+    ![alt text](src/image1-3.png)
 
 ## Часть 1 — Запуск напрямую
 Запустим сервис напрямую на устройстве через команду
 ```
 uvicorn app:app --app-dir pr1-docker/python-app/ --host 0.0.0.0 --port 8000
 ```
-![alt text](src/image.png)
+![alt text](src/image1.png)
 Все работает корректно
-![alt text](src/image-1.png)
+![alt text](src/image1-1.png)
 Посмотрим процесс в ps на хосте
-![alt text](src/image-2.png)
+![alt text](src/image1-2.png)
 На данный момент изоляции нет, процесс видит всю систему
 
 ## Часть 2 — namespaces
@@ -31,7 +31,7 @@ uvicorn app:app --app-dir pr1-docker/python-app/ --host 0.0.0.0 --port 8000
 unshare --user --map-root-user --pid --mount --net --uts --ipc --fork --mount-proc "$PWD/.venv/bin/python" -m uvicorn app:app --app-dir pr1-docker/python-app/ --host 0.0.0.0 --port 8000
 ```
 иии.... Сталкиваемся с ошибкой
-![alt text](image.png)
+![alt text](src/image.png)
 
 Все дело в том, что ядро Linux блокирует создание пользовательских пространств имен (user namespaces) для обычных пользователей. В современных дистрибутивах (особенно в Ubuntu 23.10+, 24.04+ и Debian 12+) это сделано в целях безопасности, чтобы предотвратить использование уязвимостей в ядре. Флаг --map-root-user пытается записать ваш UID в карту uid_map нового пространства имен, но ядро запрещает эту операцию.
 
@@ -40,30 +40,30 @@ unshare --user --map-root-user --pid --mount --net --uts --ipc --fork --mount-pr
 sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 ```
 Запускаем еще раз и все работает!
-![alt text](image-1.png)
+![alt text](src/image-1.png)
 
 Находим процесс с помощью команды `pgrep -f "uvicorn app:app"`
-![alt text](image-2.png)
+![alt text](src/image-2.png)
 
 В Linux в файле /proc/<PID>/status есть поле NSpid. Оно показывает PID процесса во всех пространствах имен, вложенных друг в друга. Последнее число — это PID внутри самого внутреннего неймспейса.
 `cat /proc/<PID>/status | grep NSpid`
-![alt text](image-3.png)
+![alt text](src/image-3.png)
 Заходим внутрь процесса 
 ```
 sudo nsenter -t $PID -p -m -u -i -n -- /bin/bash
 ```
-![alt text](image-4.png)
+![alt text](src/image-4.png)
 Флаги -p -m -u -i -n означают, что мы подключаемся к PID, Mount, User, IPC и NET namespace'ам целевого процесса
 
 Видим, что:
 - изнутри процесс — PID 1, чужих процессов не видит;
-![alt text](image-5.png)
+![alt text](src/image-5.png)
 - у него своё имя хоста и своя пустая сеть;
-![alt text](image-6.png)
+![alt text](src/image-6.png)
 - root внутри — это непривилегированный пользователь снаружи (проверь, под каким uid процесс виден на хосте).
-  ![alt text](image-7.png)
+  ![alt text](src/image-7.png)
 
-  ![alt text](image-8.png)
+  ![alt text](src/image-8.png)
   
 Что 
 изолировал каждый namespace:
@@ -98,12 +98,12 @@ sudo mkdir -p /sys/fs/cgroup/myapp
 ```
 echo $PID | sudo tee /sys/fs/cgroup/myapp/cgroup.procs
 ```
-![alt text](image-9.png)
+![alt text](src/image-9.png)
 Проверяем, что процесс переместился
 ```
 cat /proc/$PID/cgroup
 ```
-![alt text](image-10.png)
+![alt text](src/image-10.png)
 
 ### Тест памяти: OOMKilled (как в Kubernetes)
 Настраиваем лимит памяти
@@ -140,19 +140,19 @@ ip link set veth-cont up
 ```
 ip link set lo up
 ```
-![alt text](image-11.png)
+![alt text](src/image-11.png)
 
 Теперь с хоста можно стучаться по новому IP, вызываем OOM через эндпоинт /eat, Пытаемся съесть 150MB (больше лимита)
 ```
 curl http://192.168.100.2/eat?mb=150
 ```
 На хосте
-![alt text](image-12.png)
+![alt text](src/image-12.png)
 Внутри неймспейса
-![alt text](image-13.png)
+![alt text](src/image-13.png)
 
 Смотрим статистику OOM
-![alt text](image-14.png)
+![alt text](src/image-14.png)
 Что произошло:
 Приложение попытается выделить 150MB памяти
 Cgroup обнаружит превышение лимита (100MB)
@@ -170,7 +170,7 @@ echo "50000 100000" | sudo tee /sys/fs/cgroup/myapp2/cpu.max
 ```
 cat /sys/fs/cgroup/myapp2/cpu.max
 ```
-![alt text](image-15.png)
+![alt text](src/image-15.png)
 
 Вызываем загрузку CPU через эндпоинт /burn и ждем 5 секунд
 ```
@@ -180,7 +180,7 @@ curl http://10.0.0.42:8000/burn & sleep 5
 ```
 cat /sys/fs/cgroup/myapp2/cpu.stat
 ```
-![alt text](image-16.png)
+![alt text](src/image-16.png)
 usage_usec 9889696      ← общее время CPU
 
 nr_periods 957       ← количество периодов по 100ms
@@ -200,17 +200,17 @@ echo 10 | sudo tee /sys/fs/cgroup/myapp2/pids.max
 ```
 cat /sys/fs/cgroup/myapp2/pids.max
 ```
-![alt text](image-17.png)
+![alt text](src/image-17.png)
 Смотрим текущее количество процессов
 ```
 cat /sys/fs/cgroup/myapp2/pids.current
 ```
-![alt text](image-18.png)
+![alt text](src/image-18.png)
 Запускаем fork-бомбу через stress-ng (внутри неймспейса)
 ```
 stress-ng --fork 100 --timeout 5s &
 ```
-![alt text](image-19.png)
+![alt text](src/image-19.png)
 Проверяем статистику
 ```
 cat /sys/fs/cgroup/myapp2/pids.current
@@ -219,7 +219,7 @@ cat /sys/fs/cgroup/myapp2/pids.current
 ```
 cat /sys/fs/cgroup/myapp2/pids.events
 ```
-![alt text](image-20.png)
+![alt text](src/image-20.png)
 ## Часть 4 — права
 ### Сброс лишних capabilities
 Используем setpriv для сброса bounding set — это ограничивает набор capabilities, которые процесс может получить даже через execve.
@@ -238,7 +238,7 @@ unshare --user --map-root-user --pid --mount --net --uts --ipc --fork --mount-pr
 ```
 grep -E "Cap(Eff|Prm|Bnd|Amb)" /proc/$PID/status
 ```
-![alt text](image-22.png)
+![alt text](src/image-22.png)
 
 ### Seccomp-профиль
 Seccomp — это фильтр на уровне ядра, который перехватывает системные вызовы (syscalls). Даже если у процесса есть root-права и все мандаты, seccomp может запретить ему вызывать конкретные syscall'ы (например, reboot, mount, ptrace, mkdir). Это критически важно для предотвращения побега из контейнера (container escape).
@@ -254,17 +254,17 @@ unshare --user --map-root-user --pid --mount --net --uts --ipc --fork --mount-pr
   setpriv --inh-caps=-all --bounding-set=-all --no-new-privs \
   "$PWD/.venv/bin/python" "$PWD/pr1-docker/python-app/wrapper.py"
 ```
-![alt text](image-23.png)
+![alt text](src/image-23.png)
 
 Фильтры корректно применились
 
-![alt text](image-24.png)
+![alt text](src/image-24.png)
 
 Проверим, выполняется ли mkdir
 ```
 curl http://192.168.100.2:8000/test-mkdir
 ```
-![alt text](image-25.png)
+![alt text](src/image-25.png)
 
 mkdir корректно заблокирован))
 
@@ -279,8 +279,8 @@ chmod +x pr1-docker/mydocker.sh
 pr1-docker/mydocker.sh
 ```
 Проверим, что сервис поднимается и /health отвечает.
-![alt text](image-27.png)
-![alt text](image-26.png)
+![alt text](src/image-27.png)
+![alt text](src/image-26.png)
 
  Сравним, что совпадает, чего в скрипте нет и что Docker делает сверх него
 
@@ -317,31 +317,31 @@ sudo docker run -d \
   -p 8000:8000 \
   my-python-app:latest
 ```
-![alt text](image-28.png)
+![alt text](src/image-28.png)
 
-![alt text](image-29.png)
+![alt text](src/image-29.png)
 
-![alt text](image-30.png)
+![alt text](src/image-30.png)
 
 Сделем multi-stage-сборку с минимальной базой.
 Сравним размер
 ```
 sudo docker images --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}' | grep my-python-app
 ```
-![alt text](image-31.png)
+![alt text](src/image-31.png)
 
 Число слоев
 ```
 sudo docker image inspect my-python-app:single --format '{{len .RootFS.Layers}}'
 sudo docker image inspect my-python-app:multi  --format '{{len .RootFS.Layers}}'
 ```
-![alt text](image-32.png)
+![alt text](src/image-32.png)
 
 При пересборке приложения мы можем заметить, что
 В single-сборке закешировалось
-![alt text](image-33.png)
+![alt text](src/image-33.png)
 В multistage сборке закешировалось
-![alt text](image-34.png)
+![alt text](src/image-34.png)
 
 **Файл внутри контейнера: пропал после пересоздания**
 Записываем файл в контейнер
@@ -350,14 +350,14 @@ sudo docker run -d --name myapi-test my-python-app:multi
 sudo docker exec -u root myapi-test sh -c 'echo "hello" > /app/data.txt'
 sudo docker exec myapi-test cat /app/data.txt
 ```
-![alt text](image-35.png)
+![alt text](src/image-35.png)
 Удаляем и пересоздаём контейнер:
 ```
 sudo docker rm -f myapi-test
 sudo docker run -d --name myapi-test my-python-app:multi
 sudo docker exec myapi-test cat /app/data.txt
 ```
-![alt text](image-36.png)
+![alt text](src/image-36.png)
 
 **Запускаем контейнер с томом**
 Создаём том и монтируем его в /app:
@@ -366,7 +366,7 @@ sudo docker exec myapi-test cat /app/data.txt
 sudo docker volume create myapi-data
 sudo docker run -d --name myapi-test -v myapi-data:/app my-python-app:multi
 ```
-![alt text](image-37.png)
+![alt text](src/image-37.png)
 
 Записываем файл
 ```
@@ -378,20 +378,9 @@ sudo docker rm -f myapi-test
 sudo docker run -d --name myapi-test -v myapi-data:/app my-python-app:multi
 sudo docker exec myapi-test cat /app/data.txt
 ```
-![alt text](image-38.png)
+![alt text](src/image-38.png)
 ## Часть 7 — Когда контейнера мало
-Запусти образ под gVisor
-![alt text](image-39.png)
-gVisor (runsc) — это принципиально иная модель изоляции. Обычный Docker (runc) изолирует процесс через namespaces и cgroups, но системные вызовы уходят напрямую в ядро хоста. gVisor перехватывает эти вызовы в userspace-ядре Sentry, написанном на Go, и только Sentry (с жёстким seccomp-профилем) обращается к ядру хоста . Атакующему, получившему код внутри контейнера, приходится преодолевать второе независимое ядро, а не искать одну уязвимость в общем ядре .
-
-|                      | mydocker.sh     | Docker (runc)       | gVisor (runsc)                     |
-|----------------------|-----------------|---------------------|------------------------------------|
-| Ядро для syscall     | Хост (напрямую) | Хост (напрямую)     | Sentry → Хост (ограниченно)        |
-| Surface ядра         | Максимальный    | Максимальный        | Узкий (seccomp Sentry)             |
-| Побег через CVE ядра | Тривиально      | Тривиально          | Требует пробить Sentry + seccomp   |
-| Производительность   | Базовая         | Базовая             | Ниже (накладные расходы)           |
-| Совместимость        | Полная          | Полная              | Ограниченная (~200 syscall)        |
-| Для чего годится     | Учебный пример  | Доверенные нагрузки | Недоверенные многопользовательские |
+Запусти образ под gVisor (runsc) и сравни его изоляцию с обычным Docker и своим скриптом. Разберись, чем gVisor устроен иначе и почему его считают более изолированным. Отдельно ответь на вопрос: что у обычного контейнера остаётся общим с хостом в любом случае и почему это предел контейнерной изоляции. Выводы — в README.
 
 ## Часть 8 — Мониторинг
 Сними метрики контейнера (память, CPU, throttling) из cgroup или через cAdvisor и собери дашборд. Реши сам, что важно видеть, и выбери 3 метрики под алерты — по каждой напиши, что она ловит и чем грозит.
