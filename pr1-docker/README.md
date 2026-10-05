@@ -406,7 +406,7 @@ sudo docker-compose up -d
 sudo docker-compose ps
 curl http://localhost:8080/metrics | head -50
 ```
-![alt text](image.png)
+![alt text](image3.png)
 
 **Настройка Prometheus**
  (файл prometheus.yml)
@@ -415,13 +415,13 @@ curl http://localhost:8080/metrics | head -50
  ```
  open http://localhost:9090/targets
  ```
- ![alt text](image-1.png)
+ ![alt text](image3-1.png)
  
  Зайдем в графану (логин и пароль: admin)
  ```
  http://localhost:3000
  ```
- ![alt text](image-2.png)
+ ![alt text](image3-2.png)
  
  Далее подключим Prometheus как datasource
  ```
@@ -433,12 +433,13 @@ Add data source → выберем Prometheus.
 
 Внизу Save & test → должно быть «Data source is working».
  ```
- ![alt text](image-3.png)
+ ![alt text](image3-3.png)
  Далее импортируем дашборд 19792 (популярный дашборд для мониторинга контейнеров через cAdvisor)
- ![alt text](image-4.png)
+ ![alt text](image3-4.png)
 
  **Настроим метрики под алерты** через Grafana Alerting
  Alerting → Alert rules → New alert rule
+ ![alt text](image3-5.png)
  1. CPU Throttling Ratio
 ```
 sum(rate(container_cpu_cfs_throttled_periods_total{id!="/", id!="/init.scope"}[5m])) by (id)
@@ -451,10 +452,10 @@ sum(rate(container_cpu_cfs_periods_total{id!="/", id!="/init.scope"}[5m])) by (i
 
 2. Memory Working Set Utilization
 ```
-max(container_memory_working_set_bytes) by (id)
+100 *
+max by (id) (container_memory_working_set_bytes)
 /
-container_spec_memory_limit_bytes > 0
-* 100
+max by (id) (container_spec_memory_limit_bytes)
 ```
 Что ловит: процент использования лимита памяти. Метрика working_set точнее, чем usage_bytes, потому что исключает кеш, который ядро может освободить .
 
@@ -462,9 +463,7 @@ container_spec_memory_limit_bytes > 0
 
 3. CPU Usage Rate
 ```
-max(rate(container_cpu_usage_seconds_total[5m])) by (id)
-/
-kube_pod_container_resource_limits{resource="cpu"} > 0
+rate(container_cpu_usage_seconds_total{name!=""}[5m])
 ```
 Что ловит: приближение к CPU-лимиту. Если rate близок к 1, контейнер вот-вот начнет throttled (см. алерт №1) .
 
