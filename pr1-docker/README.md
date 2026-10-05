@@ -395,4 +395,43 @@ gVisor (runsc) — это принципиально иная модель из�
 
 
 ## Часть 8 — Мониторинг
-Сними метрики контейнера (память, CPU, throttling) из cgroup или через cAdvisor и собери дашборд. Реши сам, что важно видеть, и выбери 3 метрики под алерты — по каждой напиши, что она ловит и чем грозит.
+<!-- Сними метрики контейнера (память, CPU, throttling) из cgroup или через cAdvisor и собери дашборд. Реши сам, что важно видеть, и выбери 3 метрики под алерты — по каждой напиши, что она ловит и чем грозит. -->
+
+**Развертывание cAdvisor и Prometheus**
+cAdvisor — это демон, который читает cgroups контейнеров и отдает метрики в формате Prometheus на /metrics
+
+Поднимем его через Docker Compose ([text](docker-compose.yml))
+```
+sudo docker-compose up -d
+sudo docker-compose ps
+curl http://localhost:8080/metrics | head -50
+```
+![alt text](image.png)
+
+**Настройка Prometheus**
+ (файл prometheus.yml)
+ Пропишем также настройки для графаны в docker compose
+ Проверим, что prometheus видит таргет:
+ ```
+ open http://localhost:9090/targets
+ ```
+ ![alt text](image-1.png)
+ 
+ Зайдем в графану (логин и пароль: admin)
+ ```
+ http://localhost:3000
+ ```
+ ![alt text](image-2.png)
+ 
+ Далее подключим Prometheus как datasource
+ ```
+Connections → Data sources.
+
+Add data source → выберем Prometheus.
+
+В поле Connection URL впишем http://prometheus:9090 (именно имя сервиса, не localhost — Grafana ходит к Prometheus внутри docker-сети).
+
+Внизу Save & test → должно быть «Data source is working».
+ ```
+ ![alt text](image-3.png)
+ Далее импортируем дашборд
