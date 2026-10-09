@@ -1,0 +1,33 @@
+replicaCount: 2
+
+image:
+  repository: ermii42/incident-trigger
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# OpenTelemetry
+otel:
+  serviceName: incident-trigger-service
+  # Внутри кластера: jaeger-collector.tracing.svc:4317
+  jaegerEndpoint: ""
+
+# Внутренний URL для /load (сам сервис)
+selfUrl: "http://incident-service:8000"
+
+# Аннотации для Prometheus scrape
+prometheus:
+  scrape: true
+  path: /metrics
+  port: 8000

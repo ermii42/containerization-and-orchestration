@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "incident-service.fullname" . }}
+  labels:
+    app: {{ include "incident-service.name" . }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ include "incident-service.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "incident-service.name" . }}
+      annotations:
+        prometheus.io/scrape: "{{ .Values.prometheus.scrape }}"
+        prometheus.io/path: "{{ .Values.prometheus.path }}"
+        prometheus.io/port: "{{ .Values.prometheus.port }}"
+    spec:
+      containers:
+        - name: app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+          env:
+            - name: SELF_URL
+              value: "{{ .Values.selfUrl }}"
+            - name: OTEL_SERVICE_NAME
+              value: "{{ .Values.otel.serviceName }}"
+            {{- if .Values.otel.jaegerEndpoint }}
+            - name: JAEGER_ENDPOINT
+              value: "{{ .Values.otel.jaegerEndpoint }}"
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

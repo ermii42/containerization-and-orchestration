@@ -1,2 +1,3 @@
 .venv/
 pr1-docker/python-app/__pycache__/
+pr2-monitoring/minikube
