@@ -1,7 +1,5 @@
-from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
-from fastapi import Response
+from prometheus_client import Counter, Histogram, Gauge
 
-# RED метрики
 REQUEST_COUNT = Counter(
     "http_requests_total",
     "Total HTTP requests",
@@ -21,11 +19,7 @@ REQUESTS_IN_PROGRESS = Gauge(
     ["method", "endpoint"]
 )
 
-# Отдельный счётчик для провокаций /fail
 FAIL_COUNTER = Counter(
     "provoked_failures_total",
     "Number of provoked 5xx errors via /fail"
 )
-
-async def metrics_endpoint():
-    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)

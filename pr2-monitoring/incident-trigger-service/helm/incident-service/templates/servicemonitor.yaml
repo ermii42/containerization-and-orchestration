@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: incident-service-monitor
+  namespace: monitoring
+  labels:
+    release: monitoring   # ← ВАЖНО: этот лейбл должен совпадать с именем Helm-релиза kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - incident          # неймспейс, где живёт ваш сервис
+  selector:
+    matchLabels:
+      app: incident-service   # лейбл вашего Service в неймспейсе incident
+  endpoints:
+    - port: http              # имя порта из Service (у нас http)
+      path: /metrics
+      interval: 15s

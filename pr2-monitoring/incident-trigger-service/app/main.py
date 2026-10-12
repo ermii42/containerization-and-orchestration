@@ -7,12 +7,17 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.metrics import (
     REQUEST_COUNT, REQUEST_DURATION, REQUESTS_IN_PROGRESS,
-    FAIL_COUNTER, metrics_endpoint
+    FAIL_COUNTER
 )
 from app.tracing import setup_tracing
 from app.logging_config import setup_logging
 from app.load_generator import generate_load
 import structlog
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+
+from app.metrics import (
+    REQUEST_COUNT, REQUEST_DURATION, REQUESTS_IN_PROGRESS, FAIL_COUNTER
+)
 
 # Инициализация
 setup_logging()
@@ -89,4 +94,6 @@ async def load(
     return result
 
 # ---------- Метрики ----------
-app.add_route("/metrics", metrics_endpoint, methods=["GET"])
+@app.get("/metrics")
+def metrics(request: Request):
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
