@@ -21,7 +21,7 @@ resources:
 otel:
   serviceName: incident-trigger-service
   # Внутри кластера: jaeger-collector.tracing.svc:4317
-  jaegerEndpoint: ""
+  jaegerEndpoint: "http://jaeger-jaeger-operator-jaeger-collector.tracing.svc.cluster.local:4317"
 
 # Внутренний URL для /load (сам сервис)
 selfUrl: "http://incident-service:8000"

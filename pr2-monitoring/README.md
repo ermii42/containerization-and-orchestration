@@ -205,7 +205,7 @@ helm repo add grafana https://grafana.github.io/helm-charts
 helm repo update
 
 # Ставим Loki в неймспейс monitoring
-helm install loki grafana/loki -n monitoring -f ./incident-trigger-service/helm/incident-service/templates/loki-values.yaml
+helm install loki grafana/loki -n monitoring -f ./incident-trigger-service/helm/incident-service/loki-values.yaml
 ```
 Установка Grafana Alloy (агент сбора логов)
 ```
@@ -273,29 +273,113 @@ curl http://localhost:8000/fail
 
 Поверх Alertmanager подними Karma — веб-дашборд, который показывает все активные алерты в одном окне, с группировкой и фильтрами. Штатный интерфейс Alertmanager для этого бедноват, а Karma удобна, когда алертов становится много и за ними надо наблюдать вживую. Посмотри свои сработавшие алерты в Karma.
 
-## Результат
+Правила описываются в кастомном ресурсе PrometheusRule (CRD от Prometheus Operator, который уже стоит у вас в составе kube-prometheus-stack). Prometheus сам подхватывает такие объекты по лейблу release.
 
-Что должно получиться в итоге — единый стек мониторинга в Kubernetes, всё поднято через Helm:
+**Алерт 1. Доля ошибок 5xx выше 5% несколько минут подряд**
+Что ловит: устойчивый рост доли серверных ошибок. Пользователи прямо сейчас получают 500-е.
 
-- в кластере крутится сервис `api`: отдаёт `/metrics`, пишет логи в stdout, инструментирован трейсами;
-- Prometheus скрейпит `/metrics` и хранит метрики;
-- Loki хранит логи, а агент-сборщик (Alloy / Promtail / Fluent Bit) на каждой ноде шлёт в него вывод подов;
-- Jaeger принимает трейсы по OTLP и показывает водопад запросов;
-- Grafana подключена к Prometheus и Loki: в ней дашборд по RED и поиск по логам в одном окне;
-- Alertmanager принимает алерты от Prometheus и рассылает получателю;
-- Karma показывает активные алерты в отдельном дашборде.
+Почему критично: это прямая деградация пользовательского опыта. Даже если RPS небольшой, 10% ошибок означает, что каждый десятый запрос ломается. Кратковременный всплеск (одна-две секунды) можно игнорировать, но если ошибки держатся 5 минут — это уже инцидент.
+```
+- alert: HighErrorRate
+  expr: |
+    (
+      sum(rate(http_requests_total{job="incident-service", status_code=~"5.."}[5m]))
+      /
+      sum(rate(http_requests_total{job="incident-service"}[5m]))
+    ) > 0.05
+  for: 5m
+  labels:
+    severity: critical
+  annotations:
+    summary: "Доля 5xx ошибок выше 5% ({{ $value | humanizePercentage }})"
+    description: "Сервис incident-trigger-service отдаёт 5xx более 5% запросов последние 5 минут."
+```
+**Алерт 2. p95 времени ответа выше 2 секунд**
+Что ловит: замедление сервиса, из-за которого пользователи ждут слишком долго. Не «немного медленнее», а именно неприемлемо долго.
 
-Всё связано — проверяешь так: жмёшь `/load`, `/fail`, `/slow` → на дашборде RED реагируют графики; в Grafana находится лог ошибки; в Jaeger виден трейс с медленным и с ошибочным спаном; по трём критичным правилам алерты уходят в firing и видны в Alertmanager и Karma. По `trace_id` из строки лога открывается тот же трейс в Jaeger.
+Почему критично: latency — это то, что пользователь чувствует напрямую. p95 = 2 сек означает, что каждый двадцатый запрос идёт дольше двух секунд. Для интерактивного сервиса это плохо. Если ещё растёт, скоро упрётесь в таймауты клиентов и вышестоящих прокси.
+```
+- alert: HighLatencyP95
+  expr: |
+    histogram_quantile(0.95,
+      sum(rate(http_request_duration_seconds_bucket{job="incident-service"}[5m])) by (le)
+    ) > 2
+  for: 5m
+  labels:
+    severity: critical
+  annotations:
+    summary: "p95 времени ответа выше 2 секунд ({{ $value }}s)"
+    description: "95-й перцентиль времени ответа incident-trigger-service превышает 2 секунды последние 5 минут."
+```
+**Алерт 3. Сервис не отвечает вовсе (метрики пропали)**
+Что ловит: сервис полностью недоступен. Prometheus не может снять метрики с таргета.
 
-## Что сдать
+Почему критично: это самый тяжёлый тип инцидента. Пользователи вообще ничего не получают. При этом дашборды могут быть пустыми — потому что данных просто нет. Нужен отдельный алерт именно на «отсутствие данных», а не на «плохие данные».
+```
+- alert: ServiceDown
+  expr: up{job="incident-service"} == 0
+  for: 2m
+  labels:
+    severity: critical
+  annotations:
+    summary: "Сервис incident-trigger-service недоступен"
+    description: "Prometheus не может снять метрики с incident-service более 2 минут."
+```
+Karma — это веб-интерфейс поверх Alertmanager. Он агрегирует алерты из нескольких Alertmanager, дедуплицирует, группирует и даёт удобные фильтры. Штатный UI Alertmanager для этого бедноват, особенно когда алертов много.
 
-- Код сервиса `api` с Dockerfile (реализация любая, на оценку не влияет).
-- Конфиги стека: Prometheus с правилами алертов, Alertmanager, Karma, Grafana, Loki и агент сбора логов, Jaeger/OTel — всё в виде Helm-конфигурации.
-- `README.md` — отчёт о проделанной работе в общей форме.
-- Скриншоты: дашборд RED в Grafana; логи в Grafana; водопад трейса в Jaeger (для `/slow` и `/fail`); сработавшие алерты в Alertmanager и Karma.
+Установка через Helm
 
-## Как начать
+```
+helm repo add wiremind https://wiremind.github.io/wiremind-helm-charts
+helm repo update
+```
+уточняем имя сервиса Alertmanager
+```
+kubectl get svc -n monitoring | grep alertmanager
+```
+![alt text](image-9.png)
+```
+helm install karma wiremind/karma -n monitoring \
+  --set config.alertmanager.servers[0].name=monitoring \
+  --set config.alertmanager.servers[0].uri=http://monitoring-kube-prometheus-alertmanager.monitoring.svc.cluster.local:9093
+```
 
-Открой репозиторий с AI-ассистентом и попроси помочь с Лабой 2. Сервис можно написать самому или сгенерировать — на оценку это не влияет, фокус лабы на мониторинге. А сам мониторинг (Prometheus, Grafana, Loki, Jaeger, Alertmanager, Karma) ассистент поведёт по шагам и проверит понимание, готовое решение по стеку не выдаст.
+Проверка
+```
+kubectl get pods -n monitoring -l app.kubernetes.io/name=karma
+kubectl port-forward -n monitoring svc/karma 8081:80
+```
 
-> Пользуешься AI? Проверь, что ассистент следует правилам из [`AGENTS.md`](../AGENTS.md). Большинство инструментов подхватывают его сами; если нет — укажи ему на этот файл.
+**Провоцируем HighErrorRate**
+```
+# Порт-форвард на сервис
+kubectl port-forward -n incident svc/incident-service 8000:8000 &
+
+# Дёргаем /fail в цикле — чтобы доля ошибок превысила 5%
+for i in $(seq 1 50); do
+  curl -s -o /dev/null http://localhost:8000/fail
+done
+```
+
+**Провоцируем HighLatencyP95**
+```
+# 10 медленных запросов параллельно — каждый спит 1–3 сек
+for i in $(seq 1 10); do
+  curl -s http://localhost:8000/slow &
+done
+wait
+
+# Ещё раз, чтобы удержать высокий p95 в окне
+for i in $(seq 1 10); do
+  curl -s http://localhost:8000/slow &
+done
+wait
+```
+
+**Провоцируем ServiceDown**
+```
+# Удаляем все поды — Kubernetes пересоздаст их, но на время они пропадут
+kubectl delete pods -n incident -l app=incident-service
+
+# Или временно убираем endpoint — если сервис не отвечает, up = 0
+```
