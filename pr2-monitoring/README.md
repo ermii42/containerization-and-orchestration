@@ -20,7 +20,7 @@
 Работаем только в Kubernetes: подними локальный кластер (minikube, kind или другую инсталляцию) и весь стек разворачивай через Helm. Других вариантов (docker compose и подобное) в этой лабе не используем.
 
 ```
-minikube start --cpus=2 --memory=5000mb --kubernetes-version=v1.31.0
+minikube start --driver=kvm --cpus=5 --memory=12288 --disk-size=10g
 kubectl create namespace tracing
 helm repo add jaegertracing https://jaegertracing.github.io/helm-charts
 helm repo update
@@ -47,6 +47,13 @@ helm upgrade jaeger jaegertracing/jaeger-operator -n tracing \
 
 kubectl create namespace incident
 
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+helm install prometheus prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --create-namespace \
+  --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false
+
 helm install incident-service ./incident-trigger-service/helm/incident-service \
   -n incident \
   --set otel.jaegerEndpoint="http://jaeger-jaeger-operator-jaeger-collector.tracing.svc.cluster.local:4317"
@@ -61,8 +68,7 @@ kubectl port-forward -n incident svc/incident-service 8000:8000 &
 ![alt text](image.png)
 
 ```
-kubectl port-forward -n tracing svc/jaeger-jaeger-operator-jaeger-query 16686:16686
-
+kubectl port-forward -n tracing svc/jaeger-jaeger-operator-jaeger-query 16686:16686 --address 0.0.0.0
 ```
 ## Часть 1 — Метрики (Prometheus + Grafana)
 
@@ -79,7 +85,7 @@ helm install monitoring prometheus-community/kube-prometheus-stack \
 ![alt text](image-1.png)
 
 ```
-kubectl port-forward -n monitoring svc/monitoring-grafana 3001:80
+kubectl port-forward -n monitoring svc/monitoring-grafana 3001:80 --address 0.0.0.0
 ```
 Для получения сгенерированного админ-пароля
 ```
@@ -97,7 +103,7 @@ kubectl apply -f ./incident-trigger-service/helm/incident-service/templates/serv
 Проверка, что Prometheus видит таргет: откройте Prometheus UI:
 
 ```
-kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9091:9090
+kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9091:9090 --address 0.0.0.0
 ```
 ![alt text](image-2.png)
 
@@ -275,6 +281,17 @@ curl http://localhost:8000/fail
 
 Правила описываются в кастомном ресурсе PrometheusRule (CRD от Prometheus Operator, который уже стоит у вас в составе kube-prometheus-stack). Prometheus сам подхватывает такие объекты по лейблу release.
 
+Настройка alertmanager
+
+
+Применим alert-rules.yaml к prometheus
+```
+kubectl apply -f alert-rules.yaml
+```
+Проверим, что prometheus подхватил правила
+```
+kubectl get prometheusrules -n monitoring
+```
 **Алерт 1. Доля ошибок 5xx выше 5% несколько минут подряд**
 Что ловит: устойчивый рост доли серверных ошибок. Пользователи прямо сейчас получают 500-е.
 
@@ -347,39 +364,27 @@ helm install karma wiremind/karma -n monitoring \
 Проверка
 ```
 kubectl get pods -n monitoring -l app.kubernetes.io/name=karma
-kubectl port-forward -n monitoring svc/karma 8081:80
+kubectl port-forward -n monitoring svc/karma 8081:80 --address 0.0.0.0
 ```
 
 **Провоцируем HighErrorRate**
 ```
 # Порт-форвард на сервис
-kubectl port-forward -n incident svc/incident-service 8000:8000 &
+kubectl port-forward -n incident svc/incident-service 8000:8000 --address 0.0.0.0
 
 # Дёргаем /fail в цикле — чтобы доля ошибок превысила 5%
-for i in $(seq 1 50); do
-  curl -s -o /dev/null http://localhost:8000/fail
-done
+curl -X GET "http://localhost:8000/load?target=/fail&total=1000&concurrent=50"
 ```
+![alt text](image-10.png)
 
 **Провоцируем HighLatencyP95**
 ```
-# 10 медленных запросов параллельно — каждый спит 1–3 сек
-for i in $(seq 1 10); do
-  curl -s http://localhost:8000/slow &
-done
-wait
-
-# Ещё раз, чтобы удержать высокий p95 в окне
-for i in $(seq 1 10); do
-  curl -s http://localhost:8000/slow &
-done
-wait
+curl -X GET "http://localhost:8000/load?target=/slow&total=300&concurrent=20"
 ```
+![alt text](image-12.png)
 
 **Провоцируем ServiceDown**
 ```
-# Удаляем все поды — Kubernetes пересоздаст их, но на время они пропадут
-kubectl delete pods -n incident -l app=incident-service
-
-# Или временно убираем endpoint — если сервис не отвечает, up = 0
+kubectl scale deployment incident-service --replicas=0 -n incident
 ```
+![alt text](image-11.png)

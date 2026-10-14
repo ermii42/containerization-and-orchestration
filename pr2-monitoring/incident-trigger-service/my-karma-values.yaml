@@ -1,5 +1,0 @@
-config:
-  alertmanager:
-    servers:
-      - name: monitoring
-        uri: http://monitoring-kube-prometheus-alertmanager.monitoring.svc.cluster.local:9093
