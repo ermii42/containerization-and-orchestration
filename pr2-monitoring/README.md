@@ -82,7 +82,7 @@ helm repo update
 helm install monitoring prometheus-community/kube-prometheus-stack \
   -n monitoring --create-namespace
 ```
-![alt text](image-1.png)
+![alt text](src/image-1.png)
 
 ```
 kubectl port-forward -n monitoring svc/monitoring-grafana 3001:80 --address 0.0.0.0
@@ -105,7 +105,7 @@ kubectl apply -f ./incident-trigger-service/helm/incident-service/templates/serv
 ```
 kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9091:9090 --address 0.0.0.0
 ```
-![alt text](image-2.png)
+![alt text](src/image-2.png)
 
 **Дашборд RED**
 Панель 1 — Rate (RPS)
@@ -197,7 +197,7 @@ Legend: p95.
 
 Apply.
 
-![alt text](image-3.png)
+![alt text](src/image-3.png)
 
 ## Часть 2 — Логи (Loki + Grafana)
 
@@ -241,13 +241,13 @@ Loki нужно добавить как data source в Grafana, чтобы ис�
 ```
 kubectl port-forward -n monitoring svc/loki 3100:3100
 ```
-![alt text](image-4.png)
+![alt text](src/image-4.png)
 
  Проверка: дёргаем /fail и ищем в логах
 ```
 curl -v http://localhost:8000/fail
 ```
- ![alt text](image-5.png)
+ ![alt text](src/image-5.png)
 ## Часть 3 — Трейсы (OpenTelemetry + Jaeger)
 
 Трейс — это путь одного запроса через сервис (а в больших системах — через всю цепочку сервисов), собранный из отрезков-спанов. У каждого спана есть имя, начало, конец и длительность, а вложенные спаны показывают, из чего сложилось общее время. Трейсинг отвечает на вопрос «на каком шаге ушло время», когда по метрикам видно «где-то медленно», а где именно — непонятно.
@@ -268,9 +268,9 @@ kubectl port-forward -n tracing svc/jaeger-jaeger-operator-jaeger-query 16686:16
 curl http://localhost:8000/fail
 
 ```
-![alt text](image-6.png)
-![alt text](image-7.png)
-![alt text](image-8.png)
+![alt text](src/image-6.png)
+![alt text](src/image-7.png)
+![alt text](src/image-8.png)
 ## Часть 4 — Алерты (Alertmanager + Karma)
 
 Опиши правила алертов в Prometheus на PromQL и подключи к нему Alertmanager — компонент, который принимает сработавшие алерты, группирует их и рассылает получателям. Настрой хотя бы одного получателя (webhook, почта, Slack — что удобно, лишь бы срабатывание было видно).
@@ -354,7 +354,7 @@ helm repo update
 ```
 kubectl get svc -n monitoring | grep alertmanager
 ```
-![alt text](image-9.png)
+![alt text](src/image-9.png)
 ```
 helm install karma wiremind/karma -n monitoring \
   --set config.alertmanager.servers[0].name=monitoring \
@@ -375,16 +375,16 @@ kubectl port-forward -n incident svc/incident-service 8000:8000 --address 0.0.0.
 # Дёргаем /fail в цикле — чтобы доля ошибок превысила 5%
 curl -X GET "http://localhost:8000/load?target=/fail&total=1000&concurrent=50"
 ```
-![alt text](image-10.png)
+![alt text](src/image-10.png)
 
 **Провоцируем HighLatencyP95**
 ```
 curl -X GET "http://localhost:8000/load?target=/slow&total=300&concurrent=20"
 ```
-![alt text](image-12.png)
+![alt text](src/image-12.png)
 
 **Провоцируем ServiceDown**
 ```
 kubectl scale deployment incident-service --replicas=0 -n incident
 ```
-![alt text](image-11.png)
+![alt text](src/image-11.png)

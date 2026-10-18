@@ -2,3 +2,4 @@
 pr1-docker/python-app/__pycache__/
 pr2-monitoring/minikube
 minikube
+get_helm.sh
