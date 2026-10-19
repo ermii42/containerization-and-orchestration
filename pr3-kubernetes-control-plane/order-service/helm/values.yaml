@@ -1,0 +1,22 @@
+namespace: orders
+
+postgres:
+  image: postgres:16-alpine
+  user: app
+  password: app
+  database: app
+  storage: emptyDir   # для dev; для стойкости можно заменить на PVC
+
+api:
+  image: ermii42/orders-api:latest
+  pullPolicy: IfNotPresent
+  replicas: 1
+  healthFail: "false"
+  port: 8000
+
+worker:
+  image: ermii42/orders-worker:latest
+  pullPolicy: IfNotPresent
+  replicas: 1
+  pollInterval: "1.0"
+  maxAttempts: 5
