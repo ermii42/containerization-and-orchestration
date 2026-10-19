@@ -21,7 +21,7 @@ postgres:
       memory: 512Mi
 
 api:
-  image: ermii42/orders-api:1.1.1
+  image: ermii42/orders-api:1.1.2
   pullPolicy: IfNotPresent
   replicas: 3
   healthFail: "false"

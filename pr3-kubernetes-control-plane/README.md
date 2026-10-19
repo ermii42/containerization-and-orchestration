@@ -90,11 +90,99 @@ helm upgrade --install orders ./orders-chart \
  ![alt text](image-12.png)
  ![alt text](image-13.png)
 - поменяем `replicas` в `values.yaml`, сделаем`helm upgrade` → число подов догнало новое значение.
-
+![alt text](image-14.png)
+```
+helm upgrade orders ./orders-chart -n orders
+```
+смотреть, как догоняет
+```
+kubectl get deploy api -n orders -w
+```
+![alt text](image-15.png)
 Теперь настоящий rolling update. Подними версию образа `api` в `values.yaml` и сделай `helm upgrade`, одновременно долбя `/health` в цикле — убедись, что ни один запрос не провалился, а поды обновляются по одному, а не все разом.
+
+HEALTH_FAIL=false (иначе поды будут NotReady и rolling update застрянет):
+```
+kubectl set env deploy/api -n orders HEALTH_FAIL=false
+```
+Добавим в api-deployment.yaml
+```
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+```
+maxSurge: 1 — это максимальное количество подов, которое можно создать сверх желаемого числа replicas во время rolling update.
+maxUnavailable — это максимальное количество подов, которое может быть недоступно (не Ready) сверх желаемого числа. При replicas: 3 и maxUnavailable: 0:
+
+минимум доступных подов = replicas - maxUnavailable = 3 - 0 = 3.
+
+То есть в любой момент времени должно быть не меньше 3 Ready-подов.
+
+Узнаем адрес доступа к сервису через
+```
+minikube service api -n orders --url
+```
+
+Подготовим «долбящий» цикл
+```
+# счётчик успехов/неуспехов + вывод статусов
+ok=0; fail=0
+while true; do
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://192.168.39.162:30080/health)
+  if [ "$code" = "200" ]; then
+    ok=$((ok+1))
+  else
+    fail=$((fail+1))
+    echo "$(date +%T) FAIL code=$code"
+  fi
+  printf '\r%s ok=%d fail=%d' "$(date +%T)" "$ok" "$fail"
+  sleep 0.2
+done
+```
+Заменим в values.yaml образ ermii42/orders-api:1.1.1 -> ermii42/orders-api:1.1.2 и запустим helm upgrade
+![alt text](image-16.png)
+![alt text](image-17.png)
+(Код 000 в curl означает, что HTTP-ответ не был получен вообще: соединение либо не установилось, либо оборвалось на транспортном уровне, а не ошибки rolling update и не падение приложения)
+Rolling update отработал корректно, поды обновляются по одному, не было ситуации, когда все поды были неактивны.
 
 Закати заведомо сломанную версию: выстави `api` переменную `HEALTH_FAIL=true` и снова сделай `helm upgrade`. Покажи, что rollout зависает — новые поды не проходят readiness, поэтому старые исправные не удаляются и сервис продолжает отвечать всё это время. Сделай `helm rollback` на предыдущую ревизию и убедись, что кластер вернулся в рабочее состояние.
 
+Запомним текущую ревизию
+```
+helm history orders -n orders
+```
+![alt text](image-18.png)
+Запустить «долбящий» цикл в отдельном терминале
+И выкатим заведомо поломанную версию
+```
+helm upgrade orders ./orders-chart -n orders \
+  --set api.healthFail=true
+```
+И мы видим 
+![alt text](image-19.png)
+Новый под api-<new>-ddd остаётся 0/1 Running — он запущен, процесс жив, но readinessProbe на /health возвращает 503 (потому что HEALTH_FAIL=true), поэтому под никогда не становится Ready.
+
+Старые aaa, bbb, ccc продолжают 1/1 Running — Kubernetes не гасит их, потому что maxUnavailable: 0 запрещает уменьшать число доступных подов ниже 3, а новый под не готов.
+
+Rollout зависает 
+![alt text](image-20.png)
+
+![alt text](image-21.png)
+fail=0 — сервис продолжает отвечать всё это время, потому что трафик идёт на старые здоровые поды. Новый «сломанный» под в Endpoints не попадает (он NotReady), поэтому Service его не видит.
+
+явное подтверждение, что rollout завис
+![alt text](image-22.png)
+
+сделаем откат на предыдущую версию
+```
+helm rollback orders -n orders
+```
+![alt text](image-23.png)
+
+Теперь все хорошо :)
+![alt text](image-24.png)
 ## Часть 3 — Postgres через оператора
 
 Разверни оператор БД (CloudNativePG или Zalando postgres-operator) один раз на кластер. Добавь в чарт шаблон, который создаёт объект оператора (например, `Cluster` у CloudNativePG).

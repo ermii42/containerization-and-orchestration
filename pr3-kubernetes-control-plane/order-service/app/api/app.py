@@ -11,7 +11,7 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 # HEALTH_FAIL можно менять на лету (без рестарта) — удобно для демо в Части 2
 HEALTH_FAIL_ENV = "HEALTH_FAIL"
 
-
+print("Hello, world!")
 def _health_failing() -> bool:
     return os.getenv(HEALTH_FAIL_ENV, "false").lower() in ("1", "true", "yes")
 
