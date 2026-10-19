@@ -39,26 +39,27 @@ kubectl get pods -n kyverno
 
 Применим их
 ```
-kubectl apply -f require-resource-limits.yaml
-kubectl apply -f restrict-image-registries.yaml
-kubectl apply -f require-labels.yaml
-kubectl apply -f disallow-privileged.yaml
-kubectl apply -f disallow-latest-tag.yaml
+helm install my-policies ./kyverno-policies
 ```
 Убедимся, что они готовы
 ```
 kubectl get clusterpolicy
 ```
+![alt text](image-2.png)
 
 Подготовим 5 сырых манифестов (см  ./bad-manifests) и проверим наши политики.
 ```
-kubectl apply -f bad-no-limits.yaml
-kubectl apply -f bad-image-registry.yaml
-kubectl apply -f bad-no-label.yaml
-kubectl apply -f bad-privileged.yaml
-kubectl apply -f bad-latest-tag.yaml
+kubectl apply -f ./bad-manifests/bad-no-limits.yaml
+kubectl apply -f ./bad-manifests/bad-image-registry.yaml
+kubectl apply -f ./bad-manifests/bad-no-label.yaml
+kubectl apply -f ./bad-manifests/bad-privileged.yaml
+kubectl apply -f ./bad-manifests/bad-latest-tag.yaml
 ```
-
+![alt text](image-3.png)
+![alt text](image-4.png)
+![alt text](image-5.png)
+![alt text](image-6.png)
+![alt text](image-7.png)
 ## Часть 2 — Чарт api и worker
 
 Напиши `Chart.yaml`, `values.yaml` и шаблоны `Deployment`/`Service` для `api` (реплики — из `values`, по умолчанию 3) и `worker` (по умолчанию 2), с readiness- и liveness-пробами на `/health`. Сразу заложи в шаблоны то, что требуют правила из Части 1.

@@ -11,10 +11,12 @@ spec:
   selector:
     matchLabels:
       app: api
+      app.kubernetes.io/name: {{ .Values.commonLabels.app\.kubernetes\.io/name | quote }}
   template:
     metadata:
       labels:
         app: api
+        {{- toYaml .Values.commonLabels | nindent 8 }}
     spec:
       containers:
         - name: api
@@ -27,6 +29,8 @@ spec:
               value: {{ .Values.api.healthFail | quote }}
           ports:
             - containerPort: {{ .Values.api.port }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
           readinessProbe:
             httpGet:
               path: /health

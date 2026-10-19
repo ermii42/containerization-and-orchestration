@@ -11,10 +11,12 @@ spec:
   selector:
     matchLabels:
       app: postgres
+      app.kubernetes.io/name: {{ .Values.commonLabels.app\.kubernetes\.io/name | quote }}
   template:
     metadata:
       labels:
         app: postgres
+        {{- toYaml .Values.commonLabels | nindent 8 }}
     spec:
       containers:
         - name: postgres
@@ -28,6 +30,8 @@ spec:
               value: {{ .Values.postgres.database | quote }}
           ports:
             - containerPort: 5432
+          resources:
+            {{- toYaml .Values.postgres.resources | nindent 12 }}
           volumeMounts:
             - name: init
               mountPath: /docker-entrypoint-initdb.d

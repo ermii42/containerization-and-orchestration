@@ -6,6 +6,7 @@ metadata:
 spec:
   selector:
     app: api
+    app.kubernetes.io/name: {{ .Values.commonLabels.app\.kubernetes\.io/name | quote }}
   ports:
     - port: 80
       targetPort: {{ .Values.api.port }}

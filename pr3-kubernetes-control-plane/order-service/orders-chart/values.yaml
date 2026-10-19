@@ -1,0 +1,50 @@
+namespace: orders
+
+# Общие метки — применяются ко всем ресурсам через шаблоны
+commonLabels:
+  app.kubernetes.io/name: orders
+  app.kubernetes.io/part-of: orders
+  app.kubernetes.io/managed-by: helm
+
+postgres:
+  image: postgres:16-alpine
+  pullPolicy: IfNotPresent
+  user: app
+  password: app
+  database: app
+  storage: emptyDir
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+api:
+  image: ermii42/orders-api:1.1.1
+  pullPolicy: IfNotPresent
+  replicas: 1
+  healthFail: "false"
+  port: 8000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+worker:
+  image: ermii42/orders-worker:1.1.1
+  pullPolicy: IfNotPresent
+  replicas: 1
+  pollInterval: "1.0"
+  maxAttempts: 5
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 300m
+      memory: 192Mi
