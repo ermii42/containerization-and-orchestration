@@ -5,11 +5,13 @@ import os
 import signal
 
 import psycopg
+from aiohttp import web
 from psycopg_pool import AsyncConnectionPool
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "1.0"))
 MAX_ATTEMPTS = int(os.environ.get("MAX_ATTEMPTS", "5"))
+HEALTH_PORT = int(os.environ.get("HEALTH_PORT", "8001"))
 
 log = logging.getLogger("worker")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -20,6 +22,33 @@ _shutdown = asyncio.Event()
 def _handle_signal(*_):
     log.info("shutdown requested")
     _shutdown.set()
+
+
+def _health_failing() -> bool:
+    # читаем при каждом запросе — чтобы можно было менять на лету (Часть 2)
+    return os.getenv("HEALTH_FAIL", "false").lower() in ("1", "true", "yes")
+
+
+async def _health(_request: web.Request) -> web.Response:
+    if _health_failing():
+        return web.Response(status=503, text="unhealthy")
+    return web.Response(status=200, text="ok")
+
+
+async def _livez(_request: web.Request) -> web.Response:
+    return web.Response(status=200, text="alive")
+
+
+async def start_http() -> web.AppRunner:
+    app = web.Application()
+    app.router.add_get("/health", _health)
+    app.router.add_get("/livez", _livez)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", HEALTH_PORT)
+    await site.start()
+    log.info("health server listening on :%s", HEALTH_PORT)
+    return runner
 
 
 async def claim_one(pool: AsyncConnectionPool) -> dict | None:
@@ -82,6 +111,9 @@ async def mark(pool: AsyncConnectionPool, order_id: int, ok: bool) -> None:
 async def run() -> None:
     pool = AsyncConnectionPool(DATABASE_URL, min_size=1, max_size=5, open=False)
     await pool.open()
+
+    http_runner = await start_http()
+
     try:
         while not _shutdown.is_set():
             try:
@@ -104,6 +136,7 @@ async def run() -> None:
                 log.exception("db error, retrying in 2s")
                 await asyncio.sleep(2)
     finally:
+        await http_runner.cleanup()
         await pool.close()
         log.info("worker stopped")
 

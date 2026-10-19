@@ -3,11 +3,16 @@ kind: Service
 metadata:
   name: api
   namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "orders.labels" . | nindent 4 }}
+    app: api
 spec:
+  type: NodePort
   selector:
     app: api
-    app.kubernetes.io/name: {{ .Values.commonLabels.app\.kubernetes\.io/name | quote }}
+    app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
   ports:
-    - port: 80
-      targetPort: {{ .Values.api.port }}
-  type: NodePort
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30080

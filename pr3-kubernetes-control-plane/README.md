@@ -64,12 +64,32 @@ kubectl apply -f ./bad-manifests/bad-latest-tag.yaml
 
 Напиши `Chart.yaml`, `values.yaml` и шаблоны `Deployment`/`Service` для `api` (реплики — из `values`, по умолчанию 3) и `worker` (по умолчанию 2), с readiness- и liveness-пробами на `/health`. Сразу заложи в шаблоны то, что требуют правила из Части 1.
 
-Установи чарт. Если что-то в шаблоне не соответствует правилам — установка упадёт с ошибкой политики; поправь и добейся чистой установки.
+Проверим прохождение всех правил из части 1
+```
+helm template orders ./orders-chart > /tmp/rendered.yaml
+kubectl apply --dry-run=server -f /tmp/rendered.yaml
+```
+![alt text](image-8.png)
+```
+helm lint ./orders-chart
+```
+![alt text](image-9.png)
+Установим чарт
+```
+helm upgrade --install orders ./orders-chart \
+  -n orders --create-namespace \
+```
+![alt text](image-10.png)
 
-Проверь на своём чарте reconciliation:
+Проверим на своём чарте reconciliation:
 
-- удали под `api` руками → он вернулся;
-- поменяй `replicas` в `values.yaml`, сделай `helm upgrade` → число подов догнало новое значение.
+- удалим под `api` руками
+![alt text](image-11.png)
+
+ он вернулся;
+ ![alt text](image-12.png)
+ ![alt text](image-13.png)
+- поменяем `replicas` в `values.yaml`, сделаем`helm upgrade` → число подов догнало новое значение.
 
 Теперь настоящий rolling update. Подними версию образа `api` в `values.yaml` и сделай `helm upgrade`, одновременно долбя `/health` в цикле — убедись, что ни один запрос не провалился, а поды обновляются по одному, а не все разом.
 

@@ -17,8 +17,11 @@ spec:
         pattern:
           spec:
             containers:
-              - securityContext:
+              - =(securityContext):
                   =(privileged): "false"
             =(initContainers):
-              - securityContext:
+              - =(securityContext):
+                  =(privileged): "false"
+            =(ephemeralContainers):
+              - =(securityContext):
                   =(privileged): "false"

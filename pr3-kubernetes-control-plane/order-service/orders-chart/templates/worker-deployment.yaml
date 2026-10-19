@@ -11,7 +11,7 @@ spec:
   selector:
     matchLabels:
       app: worker
-      app.kubernetes.io/name: {{ .Values.commonLabels.app\.kubernetes\.io/name | quote }}
+      app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
   template:
     metadata:
       labels:
@@ -30,5 +30,24 @@ spec:
               value: {{ .Values.worker.pollInterval | quote }}
             - name: MAX_ATTEMPTS
               value: {{ .Values.worker.maxAttempts | quote }}
+          ports:
+            - name: http
+              containerPort: 8001
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3

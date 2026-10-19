@@ -11,7 +11,7 @@ spec:
   selector:
     matchLabels:
       app: api
-      app.kubernetes.io/name: {{ .Values.commonLabels.app\.kubernetes\.io/name | quote }}
+      app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
   template:
     metadata:
       labels:
@@ -28,18 +28,23 @@ spec:
             - name: HEALTH_FAIL
               value: {{ .Values.api.healthFail | quote }}
           ports:
-            - containerPort: {{ .Values.api.port }}
+            - name: http
+              containerPort: {{ .Values.api.port }}
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
           readinessProbe:
             httpGet:
               path: /health
-              port: {{ .Values.api.port }}
+              port: http
             initialDelaySeconds: 2
             periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /health
-              port: {{ .Values.api.port }}
+              port: http
             initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
