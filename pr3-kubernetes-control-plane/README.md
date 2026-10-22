@@ -203,7 +203,26 @@ helm upgrade --install cnpg \
 Добавление шаблона Cluster в Helm-чарт
 Cоздадим файл templates/postgres-cluster.yaml (вместо deployment-postgres.yaml и service-postgres.yaml), подправим values.yaml, api-deployment.yaml, postgres-configmap.yaml и worker-deployment.yaml
 
-Удали под `postgres` руками → оператор вернул его. Посмотри объект (`kubectl get cluster -o yaml`), найди в нём `spec` и `status`. В README сравни, чем оператор отличается от `controller-manager`.
+Удалим под `postgres` руками и посмотрим самовосстановление.
+```
+kubectl delete pod -n orders orders-postgres-1
+```
+![alt text](image-26.png)
+Сразу после этого начнем следить за подами:
+```
+kubectl get pods -n orders -w
+```
+![alt text](image-27.png)
+Оператор заметил, что фактическое состояние (0 подов) отличается от желаемого (1), и автоматически создал новый под. Это и есть reconciliation на уровне оператора.
+
+Посмотрим объект, найдем в нём `spec` и `status`.
+```
+kubectl get cluster -n orders orders-postgres -o yaml
+```
+![alt text](image-28.png)
+
+*Сравнение оператора и controller-manager*
+Стандартный controller-manager — это «универсальный диспетчер», который не знает, что внутри пода. Оператор CloudNativePG — это «диспетчер, который знает, что управляет базой данных». Он использует тот же механизм reconciliation, но принимает решения на основе понимания ролей primary/replica и состояния PostgreSQL, а не просто количества запущенных подов.
 
 ## Часть 4 — Падение control plane
 
