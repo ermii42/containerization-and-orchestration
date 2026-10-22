@@ -12,6 +12,13 @@ spec:
           - resources:
               kinds:
                 - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - cnpg-system
+                - kyverno
+                - kube-system
       validate:
         message: "Разрешены только образы из ermii42 и все официальные образы Docker Hub"
         pattern:

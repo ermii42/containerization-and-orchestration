@@ -187,6 +187,22 @@ helm rollback orders -n orders
 
 Разверни оператор БД (CloudNativePG или Zalando postgres-operator) один раз на кластер. Добавь в чарт шаблон, который создаёт объект оператора (например, `Cluster` у CloudNativePG).
 
+Установка оператора CloudNativePG
+```
+# Добавляем репозиторий чартов CNPG
+helm repo add cnpg https://cloudnative-pg.github.io/charts
+helm repo update
+
+# Устанавливаем оператор
+helm upgrade --install cnpg \
+  --namespace cnpg-system \
+  --create-namespace \
+  cnpg/cloudnative-pg
+```
+![alt text](image-25.png)
+Добавление шаблона Cluster в Helm-чарт
+Cоздадим файл templates/postgres-cluster.yaml (вместо deployment-postgres.yaml и service-postgres.yaml), подправим values.yaml, api-deployment.yaml, postgres-configmap.yaml и worker-deployment.yaml
+
 Удали под `postgres` руками → оператор вернул его. Посмотри объект (`kubectl get cluster -o yaml`), найди в нём `spec` и `status`. В README сравни, чем оператор отличается от `controller-manager`.
 
 ## Часть 4 — Падение control plane

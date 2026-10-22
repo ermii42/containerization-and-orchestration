@@ -5,20 +5,26 @@ commonLabels:
   app.kubernetes.io/part-of: orders
   app.kubernetes.io/managed-by: helm
 
+# postgres:
+#   image: docker.io/library/postgres:16-alpine
+#   pullPolicy: IfNotPresent
+#   user: app
+#   password: app
+#   database: app
+#   storage: emptyDir
+#   resources:
+#     requests:
+#       cpu: 100m
+#       memory: 128Mi
+#     limits:
+#       cpu: 500m
+#       memory: 512Mi
 postgres:
-  image: docker.io/library/postgres:16-alpine
-  pullPolicy: IfNotPresent
   user: app
   password: app
   database: app
-  storage: emptyDir
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 500m
-      memory: 512Mi
+  host: orders-postgres-rw
+  port: 5432
 
 api:
   image: ermii42/orders-api:1.1.2

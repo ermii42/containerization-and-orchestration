@@ -25,7 +25,10 @@ spec:
           imagePullPolicy: {{ .Values.worker.pullPolicy }}
           env:
             - name: DATABASE_URL
-              value: "postgresql://{{ .Values.postgres.user }}:{{ .Values.postgres.password }}@postgres:5432/{{ .Values.postgres.database }}"
+              valueFrom:
+                secretKeyRef:
+                  name: orders-postgres-app
+                  key: uri
             - name: POLL_INTERVAL
               value: {{ .Values.worker.pollInterval | quote }}
             - name: MAX_ATTEMPTS

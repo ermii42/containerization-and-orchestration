@@ -1,4 +1,3 @@
-# templates/postgres-configmap.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,4 +5,4 @@ metadata:
   namespace: {{ .Values.namespace }}
 data:
   init.sql:
-    {{ .Files.Get "files/init.sql" | indent 4 }}
+    {{- .Files.Get "files/init.sql" | nindent 4 }}

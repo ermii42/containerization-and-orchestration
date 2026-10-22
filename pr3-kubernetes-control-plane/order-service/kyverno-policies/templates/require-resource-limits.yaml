@@ -12,6 +12,13 @@ spec:
           - resources:
               kinds:
                 - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - cnpg-system
+                - kyverno
+                - kube-system
       validate:
         message: "CPU и memory limits обязательны для всех контейнеров."
         pattern:
