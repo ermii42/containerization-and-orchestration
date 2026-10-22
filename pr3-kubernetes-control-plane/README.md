@@ -1,6 +1,6 @@
 ## Часть 0 — Сервисы
 
-Сгенерируй `api` и `worker`:
+Сгенерируем `api` и `worker`:
 
 - `api` — HTTP-сервис с эндпоинтами:
   - `GET /health` — возвращает `ok`, но при выставленной переменной окружения (например, `HEALTH_FAIL=true`) отвечает 5xx — понадобится в Части 2;
@@ -147,13 +147,6 @@ done
 (Код 000 в curl означает, что HTTP-ответ не был получен вообще: соединение либо не установилось, либо оборвалось на транспортном уровне, а не ошибки rolling update и не падение приложения)
 Rolling update отработал корректно, поды обновляются по одному, не было ситуации, когда все поды были неактивны.
 
-Закати заведомо сломанную версию: выстави `api` переменную `HEALTH_FAIL=true` и снова сделай `helm upgrade`. Покажи, что rollout зависает — новые поды не проходят readiness, поэтому старые исправные не удаляются и сервис продолжает отвечать всё это время. Сделай `helm rollback` на предыдущую ревизию и убедись, что кластер вернулся в рабочее состояние.
-
-Запомним текущую ревизию
-```
-helm history orders -n orders
-```
-![alt text](image-18.png)
 Запустить «долбящий» цикл в отдельном терминале
 И выкатим заведомо поломанную версию
 ```
@@ -183,6 +176,7 @@ helm rollback orders -n orders
 
 Теперь все хорошо :)
 ![alt text](image-24.png)
+
 ## Часть 3 — Postgres через оператора
 
 Разверни оператор БД (CloudNativePG или Zalando postgres-operator) один раз на кластер. Добавь в чарт шаблон, который создаёт объект оператора (например, `Cluster` у CloudNativePG).
@@ -226,12 +220,36 @@ kubectl get cluster -n orders orders-postgres -o yaml
 
 ## Часть 4 — Падение control plane
 
-Останови `etcd` (или `apiserver`) своего kind/k3d/minikube:
+*Остановка компонента control plane*
+В Minikube etcd и kube-apiserver запускаются как статические поды (static pods). Их манифесты лежат в директории /etc/kubernetes/manifests внутри виртуальной машины, и kubelet автоматически перезапускает их при падении.
 
-- попробуй что-то изменить (`helm upgrade`, `kubectl apply`) → изменения не проходят;
-- проверь, что `api`/`worker`/`postgres` продолжают отвечать (`/health`, `/orders`).
+Чтобы «сломать» control plane, нужно временно убрать манифест нужного компонента из этой директории. Например, для etcd:
+Заходим внутрь minikube
+```
+minikube ssh
+```
+Перемещаем манифест etcd в /tmp (kubelet перестанет его видеть и остановит под)
+```
+sudo mv /etc/kubernetes/manifests/etcd.yaml /tmp/
+```
+![alt text](image-32.png)
+После этого kubectl перестанет отвечать на запросы.
+![alt text](image-35.png)
+попробем что-то изменить
+```
+helm upgrade orders ./orders-chart -n orders
+```
+![alt text](image-33.png)
+изменения не проходят
 
-Верни control plane и убедись, что кластер снова управляем.
+- проверим, что `api`/`worker`/`postgres` продолжают отвечать (`/health`, `/orders`).
+```
+curl -s http://$(minikube ip):30080/health
+curl -s http://$(minikube ip):30080/orders
+```
+![alt text](image-34.png)
+
+Вернем control plane и убедимся, что кластер снова управляем.
 
 ## Часть 5 — Мониторинг
 
