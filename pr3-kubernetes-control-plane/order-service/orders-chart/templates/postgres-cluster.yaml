@@ -1,0 +1,21 @@
+# templates/postgres-cluster.yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: orders-postgres
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "orders.labels" . | nindent 4 }}
+spec:
+  instances: {{ .Values.postgres.instances | default 1 }}
+  storage:
+    size: {{ .Values.postgres.storage | default "1Gi" }}
+  bootstrap:
+    initdb:
+      database: {{ .Values.postgres.database | default "app" }}
+      owner: {{ .Values.postgres.owner | default "app" }}
+      # Вот здесь мы подключаем ваш ConfigMap
+      postInitApplicationSQLRefs:
+        configMapRefs:
+          - name: postgres-init
+            key: init.sql

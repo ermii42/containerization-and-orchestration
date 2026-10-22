@@ -1,0 +1,20 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-labels
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: check-for-labels
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "Метка app.kubernetes.io/name обязательна и не может быть пустой."
+        pattern:
+          metadata:
+            labels:
+              app.kubernetes.io/name: "?*"

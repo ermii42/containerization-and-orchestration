@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad-latest-tag
+  labels:
+    app.kubernetes.io/name: test
+spec:
+  containers:
+    - name: app
+      image: registry.example.com/nginx:latest
+      resources:
+        limits:
+          cpu: 100m
+          memory: 128Mi

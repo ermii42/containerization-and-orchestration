@@ -1,0 +1,29 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-image-registries
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: validate-registries
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - cnpg-system
+                - kyverno
+                - kube-system
+      validate:
+        message: "Разрешены только образы из ermii42 и все официальные образы Docker Hub"
+        pattern:
+          spec:
+            containers:
+              - image: "ermii42/* | docker.io/library/*"
+            =(initContainers):
+              - image: "ermii42/* | docker.io/library/*"
