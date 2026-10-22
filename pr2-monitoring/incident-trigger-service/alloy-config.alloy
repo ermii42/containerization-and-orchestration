@@ -1,0 +1,57 @@
+// 1. Обнаружение всех подов в кластере
+discovery.kubernetes "pods" {
+  role = "pod"
+}
+
+// 2. Релейблинг: добавляем полезные метки и фильтруем по неймспейсу incident
+discovery.relabel "pod_logs" {
+  targets = discovery.kubernetes.pods.targets
+
+  // Добавляем метки из Kubernetes в логи
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app"]
+    target_label  = "app"
+  }
+
+  // Сохраняем путь к лог-файлу
+  rule {
+    source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
+    separator     = "/"
+    regex         = "(.+?)/(.+)"
+    replacement   = "/var/log/pods/$1/$2/*.log"
+    target_label  = "__path__"
+  }
+
+  // Собираем логи только из неймспейса incident
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    regex         = "incident"
+    action        = "keep"
+  }
+}
+
+// 3. Чтение логов подов
+loki.source.kubernetes "pods" {
+  targets    = discovery.relabel.pod_logs.output
+  forward_to = [loki.write.local.receiver]
+}
+
+// 4. Отправка логов в Loki
+loki.write "local" {
+  endpoint {
+    url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+    tenant_id = "incident-service"
+  }
+}

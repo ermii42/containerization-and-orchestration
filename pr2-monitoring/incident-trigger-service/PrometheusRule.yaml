@@ -1,0 +1,43 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: incident-service-alerts
+  namespace: monitoring
+  labels:
+    release: monitoring   # ← должен совпадать с именем вашего Helm-релиза kube-prometheus-stack
+spec:
+  groups:
+    - name: incident-service
+      rules:
+        - alert: HighErrorRate
+          expr: |
+            (
+              sum(rate(http_requests_total{job="incident-service", status_code=~"5.."}[5m]))
+              /
+              sum(rate(http_requests_total{job="incident-service"}[5m]))
+            ) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Доля 5xx ошибок выше 5% ({{ $value | humanizePercentage }})"
+            description: "Сервис incident-trigger-service отдаёт 5xx более 5% запросов последние 5 минут."
+        - alert: HighLatencyP95
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(http_request_duration_seconds_bucket{job="incident-service"}[5m])) by (le)
+            ) > 2
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "p95 времени ответа выше 2 секунд ({{ $value }}s)"
+            description: "95-й перцентиль времени ответа incident-trigger-service превышает 2 секунды последние 5 минут."
+        - alert: ServiceDown
+          expr: up{job="incident-service"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Сервис incident-trigger-service недоступен"
+            description: "Prometheus не может снять метрики с incident-service более 2 минут."

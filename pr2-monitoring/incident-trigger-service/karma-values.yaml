@@ -1,0 +1,15 @@
+configMap:
+  enabled: true
+  rawConfig:
+    alertmanager:
+      interval: 30s
+      servers:
+        - name: monitoring
+          uri: http://monitoring-kube-prometheus-alertmanager.monitoring.svc.cluster.local:9093
+          proxy: true
+    
+    # БЛОК ДЛЯ ФИЛЬТРАЦИИ
+    filters:
+      default:
+        - "namespace=incident"
+        - "app=incident-service"   # <-- Проверьте точное имя лейбла! (может быть service, job или app_kubernetes_io_name)

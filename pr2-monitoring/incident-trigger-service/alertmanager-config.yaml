@@ -1,0 +1,45 @@
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: incident-service-config
+  namespace: monitoring
+  labels:
+    alertmanager: main # Убедитесь, что селектор в Alertmanager CR настроен на этот лейбл
+spec:
+  route:
+    receiver: 'default-webhook'
+    groupBy: ['alertname', 'severity']
+    groupWait: 10s
+    groupInterval: 5m
+    repeatInterval: 1h
+    routes:
+      # Маршрут для critical (как у вас и было)
+      - matchers:
+          - name: severity
+            value: critical
+        receiver: 'critical-webhook'
+        groupWait: 10s
+        repeatInterval: 30m
+      # НОВЫЙ маршрут для warning
+      - matchers:
+          - name: severity
+            value: warning
+        receiver: 'warning-webhook' # Ссылаемся на нового получателя
+  receivers:
+    - name: 'default-webhook'
+      webhookConfigs:
+        - url: 'https://webhook.site/977586e6-fa90-48a4-b176-70272ea6a203'
+          sendResolved: true
+    - name: 'critical-webhook'
+      webhookConfigs:
+        - url: 'https://webhook.site/977586e6-fa90-48a4-b176-70272ea6a203'
+          sendResolved: true
+          # Ваш httpConfig с headers вызовет ошибку, так как headers не поддерживается
+          # httpConfig:
+          #   headers:
+          #     X-Severity: critical
+    # НОВЫЙ получатель
+    - name: 'warning-webhook'
+      webhookConfigs:
+        - url: 'https://webhook.site/977586e6-fa90-48a4-b176-70272ea6a203'
+          sendResolved: true
