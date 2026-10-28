@@ -1,0 +1,50 @@
+{{- if .Values.monitoring.enabled }}
+{{- $labelsInstance := "{{ $labels.instance }}" }}
+{{- $valueHumanize := "{{ $value | humanizePercentage }}" }}
+{{- $value := "{{ $value }}" }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "orders.fullname" . }}-alerts
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "orders.labels" . | nindent 4 }}
+    release: prometheus
+spec:
+  groups:
+    - name: orders.api.rules
+      rules:
+        - alert: OrdersApiDown
+          expr: up{job="api", namespace="{{ .Values.namespace }}"} == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Orders API is down"
+            description: "API instance {{ $labelsInstance }} has been unreachable for >1m."
+
+        - alert: OrdersApiHighErrorRate
+          expr: |
+            sum(rate(http_requests_total{job="api", namespace="{{ .Values.namespace }}", status=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total{job="api", namespace="{{ .Values.namespace }}"}[5m]))
+            > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High 5xx error rate on Orders API"
+            description: "Error rate is {{ $valueHumanize }} for the last 5m."
+
+        - alert: OrdersWorkerProcessingStalled
+          expr: |
+            rate(orders_processed_total{job="worker", namespace="{{ .Values.namespace }}"}[10m]) == 0
+            and
+            (orders_queue_size{job="api", namespace="{{ .Values.namespace }}"} > 0 or up{job="worker", namespace="{{ .Values.namespace }}"} == 0)
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Worker is not processing orders"
+            description: "No orders processed in 10m. Queue size: {{ $value }}."
+{{- end }}

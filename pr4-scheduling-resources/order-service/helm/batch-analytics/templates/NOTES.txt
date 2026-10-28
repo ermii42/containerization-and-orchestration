@@ -1,0 +1,5 @@
+Batch stub deployed as {{ include "batch-analytics.fullname" . }}.
+It intentionally burns CPU/RAM. Watch it:
+  kubectl -n {{ .Release.Namespace }} logs -f deploy/{{ include "batch-analytics.fullname" . }}
+Remove:
+  helm uninstall {{ .Release.Name }} -n {{ .Release.Namespace }}

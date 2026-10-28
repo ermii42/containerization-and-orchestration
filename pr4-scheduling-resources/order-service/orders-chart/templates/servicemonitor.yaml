@@ -1,0 +1,47 @@
+{{- if .Values.monitoring.enabled }}
+# ServiceMonitor для api
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "orders.fullname" . }}-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "orders.labels" . | nindent 4 }}
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: api
+      app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.scrapeTimeout | default "10s" }}
+---
+# ServiceMonitor для worker
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "orders.fullname" . }}-worker
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "orders.labels" . | nindent 4 }}
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: worker
+      app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.scrapeTimeout | default "10s" }}
+{{- end }}

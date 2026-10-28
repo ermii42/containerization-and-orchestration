@@ -1,0 +1,53 @@
+namespace: orders
+
+commonLabels:
+  app.kubernetes.io/name: orders
+  app.kubernetes.io/part-of: orders
+  app.kubernetes.io/managed-by: helm
+
+# --- Postgres (CNPG) ---
+postgres:
+  user: app
+  password: app
+  database: app
+  host: orders-postgres-rw
+  port: 5432
+  instances: 1
+  storage: 1Gi
+
+# --- api ---
+api:
+  image: ermii42/orders-api:monitoring
+  pullPolicy: IfNotPresent
+  replicas: 3
+  healthFail: "false"
+  port: 8000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# --- worker ---
+worker:
+  image: ermii42/orders-worker:monitoring
+  pullPolicy: IfNotPresent
+  replicas: 2
+  pollInterval: "1.0"
+  maxAttempts: 5
+  port: 8001                  # HEALTH_PORT в worker.py (для /health, /livez, /metrics)
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 300m
+      memory: 192Mi
+
+# --- monitoring ---
+monitoring:
+  enabled: true
+  interval: 30s
+  scrapeTimeout: 10s

@@ -1,0 +1,30 @@
+replicaCount: 1
+
+image:
+  repository: ermii42/batch-analytics
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# если образ в приватном registry
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# параметры «нагрузки» — прокидываются в env
+workload:
+  cpuThreads: 2
+  memStepMb: 50
+  memSleep: 1.0
+  memLimitMb: 1024
+
+resources:
+  requests:
+    cpu: "500m"
+    memory: "256Mi"
+  limits:
+    cpu: "2"
+    memory: "1536Mi"   # чуть выше memLimitMb, чтобы не OOM сразу
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
