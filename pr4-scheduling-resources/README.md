@@ -13,23 +13,83 @@
 docker build -t ermii42/batch-analytics:0.1.0 .
 docker push ermii42/batch-analytics:0.1.0
 ```
-![alt text](image.png)
-## Часть 1 — Выбери механизм разнесения
+## Часть 1 — Выберем механизм разнесения
 
-Добавь в `values.yaml` параметр выбора между `podAntiAffinity` и `topologySpreadConstraints`. Обоснуй в README, чем один отличается от другого и почему выбрал именно этот.
+Добавим в values.yaml параметр scheduling.strategy, который переключает поведение между podAntiAffinity и topologySpreadConstraints. В шаблонах deployment-api.yaml и deployment-worker.yaml используем условие `{{- if eq .Values.scheduling.strategy "topologySpread" }}`, чтобы рендерить только один из блоков.
+
+**Почему выбран topologySpreadConstraints?**
+
+Для учебного кластера (minikube, один узел) разница не видна, но в реальном сценарии orders с 3 репликами api и 2 репликами worker:
+
+- Гибкость при масштабировании. Если завтра api.replicas станет 5, а узлов в кластере 3, podAntiAffinity (required) оставит 2 пода в Pending навсегда. topologySpreadConstraints с maxSkew: 1 распределит 2-2-1 и продолжит работать .
+
+- Контроль перекоса. maxSkew: 1 даёт измеримую гарантию: разница между узлами не больше одного пода. podAntiAffinity такой гарантии не даёт — при preferred поды могут «свалиться» на один узел .
+
+- Мягкий режим ScheduleAnyway. Для учебного кластера с одним узлом DoNotSchedule заблокировал бы все поды, кроме первого. ScheduleAnyway позволяет подам запуститься даже при невозможности идеального распределения . В production можно переключить на DoNotSchedule через values.yaml, не меняя шаблоны.
+
+podAntiAffinity оставлен как альтернатива для сценариев, где нужен строгий запрет совместного размещения (например, «два пода БД никогда не должны быть на одном узле»).
 
 ## Часть 2 — Тесная площадка
 
-Подними кластер kind/k3d **строго на 1-2 ноды** — намеренно мало, чтобы легко получить нехватку ресурсов. Добавь `batch` новым шаблоном в чарт `shop`, с разумными requests/limits — как у любого пода, гвардрейлы Лабы 3 действуют без исключений — и разверни через `helm upgrade`.
+Добавим в values.yaml блок batch, а также templates/batch-service.yaml и templates/batch-deployment.yaml
+
+![alt text](image.png)
 
 ## Часть 3 — Реальные числа вместо угадывания
 
-Прогони `k6`/`hey` по пути заказа, дай Prometheus насобирать данные. Запусти `krr` против своего namespace — он проанализирует реальное потребление `api`, `worker`, `postgres` и предложит requests/limits. Пропиши рекомендованные значения в `values.yaml`, задеплой через `helm upgrade`. В README сравни свою изначальную догадку с тем, что предложил `krr`, и объясни расхождение.
+Прогоним `hey` по пути заказа, дадим Prometheus насобирать данные.
+```
+hey -z 2m -c 50 -m POST   -H "Content-Type: application/json"   -d '{"payload"
+:{"sku":"load-test","qty":1}}'   http://$(minikube ip):30080/order
+```
+![alt text](image-1.png)
+Запустим `krr` против своего namespace — он проанализирует реальное потребление `api`, `worker`, `postgres`. 
+```
+krr simple -n orders -p http://127.0.0.1:9090
+```
+![alt text](image-2.png)
+ограничение: krr не анализирует CNPG Cluster, только стандартные workload'ы
 
-## Часть 4 — Разнеси критический сервис
+**Что говорит KRR:**
+- requests.cpu с 100m → 57m (на под). Суммарно по 3 подам: 300m → 171m, экономия 129m.
+- limits.cpu с 500m → unset (KRR считает CPU limit вредным: под должен мочь «бурстить» на свободные CPU узла).
+- requests.memory с 128Mi → 100Mi (max + 15%).
+- limits.memory с 256Mi → 100Mi (KRR ставит limit = request, чтобы под не мог выйти за пределы, но и не «резервировал» лишнего).
+
+Почему так: под нагрузкой 50 RPS api реально потребляет ~57m CPU (95-й перцентиль) и ~87Mi memory (max). Наши 100m/128Mi были завышены примерно в 1.5–2 раза.
+
+Пропишем рекомендованные значения в `values.yaml`, задеплоим через `helm upgrade`.
+## Часть 4 — Разнесем критический сервис
 
 Примени механизм из Части 1 к `api`. Докажи (`kubectl get pods -o wide`), что реплики оказались на разных нодах. Опиши в README, как это повышает отказоустойчивость.
 
+Для начала пересоздадим кластер с несколькими нодами:
+```
+minikube delete
+
+minikube start --driver=docker --cpus=5 --memory=12288 --disk-size=40g --nodes=2
+```
+![alt text](image-3.png)
+Восстановим заново поды
+```
+helm install prometheus prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --create-namespace \
+  --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false
+
+helm install cnpg cnpg/cloudnative-pg \
+  --namespace cnpg-system \
+  --create-namespace
+
+helm uninstall orders -n orders
+
+helm install orders ./orders-chart -n orders --create-namespace
+```
+![alt text](image-4.png)
+Minikube по умолчанию создаёт кластер с одной нодой. В такой конфигурации планировщик Kubernetes физически не может разместить реплики на разных нодах, даже если в манифесте заданы topologySpreadConstraints или podAntiAffinity. Для демонстрации распределения кластер был пересоздан с флагом --nodes=2
+
+**Как это повышает отказоустойчивость**
+Размещение реплик api на разных нодах означает, что при отказе одной ноды (например, minikube-m02) её поды становятся недоступны, но остальные реплики на других нодах продолжают обслуживать трафик. Kubernetes Service автоматически исключает IP недоступных подов из Endpoints, и запросы идут на живые реплики. Без такого распределения (все поды на одной ноде) отказ единственной ноды привёл бы к полной недоступности сервиса, несмотря на наличие трёх реплик
 ## Часть 5 — Приоритеты и гарантии
 
 Добавь в чарт шаблоны `priorityClass` и `PodDisruptionBudget`, значения — через `values.yaml`:

@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: batch
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "orders.labels" . | nindent 4 }}
+    app: batch
+spec:
+  replicas: {{ .Values.batch.replicas }}
+  selector:
+    matchLabels:
+      app: batch
+      app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
+  template:
+    metadata:
+      labels:
+        app: batch
+        {{- toYaml .Values.commonLabels | nindent 8 }}
+    spec:
+      {{- if eq .Values.scheduling.strategy "topologySpread" }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.scheduling.maxSkew }}
+          topologyKey: {{ .Values.scheduling.topologyKey }}
+          whenUnsatisfiable: {{ .Values.scheduling.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              app: batch
+              app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
+      {{- else if eq .Values.scheduling.strategy "podAntiAffinity" }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: batch
+                  app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
+              topologyKey: {{ .Values.scheduling.topologyKey }}
+      {{- end }}
+      containers:
+        - name: batch
+          image: {{ .Values.batch.image }}
+          imagePullPolicy: {{ .Values.batch.pullPolicy }}
+          env:
+            - name: CPU_THREADS
+              value: {{ .Values.batch.cpuThreads | quote }}
+            - name: MEM_LIMIT_MB
+              value: {{ .Values.batch.memLimitMb | quote }}
+            - name: MEM_STEP_MB
+              value: {{ .Values.batch.memStepMb | quote }}
+            - name: MEM_SLEEP
+              value: {{ .Values.batch.memSleep | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.batch.port }}
+          resources:
+            {{- toYaml .Values.batch.resources | nindent 12 }}

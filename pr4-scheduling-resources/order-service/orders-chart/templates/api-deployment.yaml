@@ -23,6 +23,25 @@ spec:
         app: api
         {{- toYaml .Values.commonLabels | nindent 8 }}
     spec:
+      {{- if eq .Values.scheduling.strategy "topologySpread" }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.scheduling.maxSkew }}
+          topologyKey: {{ .Values.scheduling.topologyKey }}
+          whenUnsatisfiable: {{ .Values.scheduling.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              app: api
+              app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
+      {{- else if eq .Values.scheduling.strategy "podAntiAffinity" }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: api
+                  app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
+              topologyKey: {{ .Values.scheduling.topologyKey }}
+      {{- end }}
       containers:
         - name: api
           image: {{ .Values.api.image }}
@@ -50,7 +69,7 @@ spec:
             failureThreshold: 3
           livenessProbe:
             httpGet:
-              path: /health
+              path: /livez
               port: http
             initialDelaySeconds: 10
             periodSeconds: 10

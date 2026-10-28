@@ -5,6 +5,16 @@ commonLabels:
   app.kubernetes.io/part-of: orders
   app.kubernetes.io/managed-by: helm
 
+# --- scheduling ---
+# strategy: podAntiAffinity | topologySpread
+# - podAntiAffinity: строгое "не более одного пода на узел" (жёсткий лимит)
+# - topologySpread: равномерное распределение с допустимым перекосом maxSkew
+scheduling:
+  strategy: topologySpread   # выбранный вариант
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway   # ScheduleAnyway (мягко) или DoNotSchedule (жёстко)
+
 # --- Postgres (CNPG) ---
 postgres:
   user: app
@@ -24,11 +34,10 @@ api:
   port: 8000
   resources:
     requests:
-      cpu: 100m
-      memory: 128Mi
+      cpu: 57m
+      memory: 100Mi
     limits:
-      cpu: 500m
-      memory: 256Mi
+      memory: 100Mi
 
 # --- worker ---
 worker:
@@ -37,14 +46,31 @@ worker:
   replicas: 2
   pollInterval: "1.0"
   maxAttempts: 5
-  port: 8001                  # HEALTH_PORT в worker.py (для /health, /livez, /metrics)
+  port: 8001
   resources:
     requests:
-      cpu: 50m
-      memory: 64Mi
+      cpu: 13m
+      memory: 100Mi
     limits:
-      cpu: 300m
-      memory: 192Mi
+      memory: 100Mi
+
+# --- batch ---
+batch:
+  image: ermii42/batch-analytics:0.1.0
+  pullPolicy: IfNotPresent
+  replicas: 1
+  port: 8002
+  cpuThreads: 2
+  memLimitMb: 1024
+  memStepMb: 50
+  memSleep: "1.0"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
 
 # --- monitoring ---
 monitoring:

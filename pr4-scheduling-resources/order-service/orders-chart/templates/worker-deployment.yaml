@@ -19,6 +19,25 @@ spec:
         {{- toYaml .Values.commonLabels | nindent 8 }}
     spec:
       terminationGracePeriodSeconds: 30
+      {{- if eq .Values.scheduling.strategy "topologySpread" }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.scheduling.maxSkew }}
+          topologyKey: {{ .Values.scheduling.topologyKey }}
+          whenUnsatisfiable: {{ .Values.scheduling.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              app: worker
+              app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
+      {{- else if eq .Values.scheduling.strategy "podAntiAffinity" }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: worker
+                  app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
+              topologyKey: {{ .Values.scheduling.topologyKey }}
+      {{- end }}
       containers:
         - name: worker
           image: {{ .Values.worker.image }}
@@ -35,7 +54,7 @@ spec:
               value: {{ .Values.worker.maxAttempts | quote }}
           ports:
             - name: http
-              containerPort: 8001
+              containerPort: {{ .Values.worker.port }}
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
           readinessProbe:
@@ -48,7 +67,7 @@ spec:
             failureThreshold: 3
           livenessProbe:
             httpGet:
-              path: /health
+              path: /livez
               port: http
             initialDelaySeconds: 10
             periodSeconds: 10
