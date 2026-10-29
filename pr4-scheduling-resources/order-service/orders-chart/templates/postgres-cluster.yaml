@@ -16,7 +16,6 @@ spec:
     initdb:
       database: {{ .Values.postgres.database }}
       owner: {{ .Values.postgres.user }}
-      # init.sql применяется только на пустом кластере; для уже созданного — вручную
       postInitApplicationSQLRefs:
         configMapRefs:
           - name: postgres-init

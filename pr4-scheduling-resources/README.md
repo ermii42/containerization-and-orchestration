@@ -150,7 +150,33 @@ PDB защищает только от добровольных нарушени
 - preemption — как `api`/`postgres` (выше приоритетом) вытесняют `batch`, чтобы получить место.
 
 **Поднимем batch.replicas и получим Pending**
-Поднимем 130 реплик
+Поднимем 100 реплик
+![alt text](image-6.png)
+Проверим причиину
+```
+kubectl describe pod -n orders batch-859d6f95dd-x5cj9 | tail -20
+```
+![alt text](image-7.png)
+Это происходит потому, что планировщик вычитает requests каждого уже запущенного пода из Allocatable узла. Если сумма requests всех подов превышает Allocatable, новые поды не влезают 
+
+**Провоцируем preemption (вытеснение batch)**
+
+Теперь попробуем создать под с высоким PriorityClass и опишем его в high-priority-test.yaml
+Применим его
+```
+kubectl apply -f high-priority-test.yaml
+```
+Что произойдёт: планировщик увидит, что высокоприоритетный под не влезает. Он запустит логику preemption: найдёт узел, с которого можно удалить поды с более низким приоритетом, чтобы освободить место 
+Поскольку batch имеет PriorityClass orders-batch (value -100), а api/postgres — orders-critical (value 1000000), планировщик выберет batch как жертву.
+**Смотрим события preemption**
+```
+kubectl get events -n orders --field-selector reason=Preempted --sort-by='.lastTimestamp'
+```
+![alt text](image-8.png)
+У вытесненного пода batch в событиях будет Preempted by <api-pod>. После того как batch завершит работу (или будет убит), api займёт его место.
+
+Убедимся, что batch-поды исчезли, а тестовый под запустился
+![alt text](image-9.png)
 ## Часть 7 — Давление по памяти, порядок жертв
 
 Через `values.yaml` подними потребление `batch`, дождись давления по памяти на ноде. Докажи, что eviction забирает `batch` первым — как менее защищённый Burstable-под с низким приоритетом, — критический путь (Guaranteed) остаётся. Объясни в README разницу с `OOMKilled` по собственному лимиту — два разных диагноза с одинаковым симптомом.

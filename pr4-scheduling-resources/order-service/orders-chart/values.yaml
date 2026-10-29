@@ -89,7 +89,7 @@ batch:
   replicas: 1
   port: 8002
   cpuThreads: 2
-  memLimitMb: 1024
+  memLimitMb: 10
   memStepMb: 50
   memSleep: "1.0"
   priorityClassName: orders-batch
@@ -98,8 +98,8 @@ batch:
   # Burstable QoS: requests заметно ниже limits
   resources:
     requests:
-      cpu: 100m
-      memory: 128Mi
+      cpu: 200m
+      memory: 300Mi
     limits:
       cpu: 500m
       memory: 1Gi
