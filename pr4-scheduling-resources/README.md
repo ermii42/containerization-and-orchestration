@@ -67,7 +67,7 @@ krr simple -n orders -p http://127.0.0.1:9090
 ```
 minikube delete
 
-minikube start --driver=docker --cpus=5 --memory=12288 --disk-size=40g --nodes=2
+minikube start --driver=docker --cpus=2 --memory=4096 --disk-size=20g --nodes=2
 ```
 ![alt text](image-3.png)
 Восстановим заново поды
@@ -177,9 +177,15 @@ kubectl get events -n orders --field-selector reason=Preempted --sort-by='.lastT
 
 Убедимся, что batch-поды исчезли, а тестовый под запустился
 ![alt text](image-9.png)
+
 ## Часть 7 — Давление по памяти, порядок жертв
 
-Через `values.yaml` подними потребление `batch`, дождись давления по памяти на ноде. Докажи, что eviction забирает `batch` первым — как менее защищённый Burstable-под с низким приоритетом, — критический путь (Guaranteed) остаётся. Объясни в README разницу с `OOMKilled` по собственному лимиту — два разных диагноза с одинаковым симптомом.
+Через `values.yaml` поднимием потребление `batch`, дождись давления по памяти на ноде. 
+Тк у меня не получается никак поймать Eviction, только OOMKIlled, изменим порог срабатывания eviction до 2 гб
+```
+minikube start --driver=docker --cpus=2 --memory=4096 --disk-size=20g --nodes=2 --extra-config=kubelet.eviction-hard="memory.available<2Gi"
+```
+Докажи, что eviction забирает `batch` первым — как менее защищённый Burstable-под с низким приоритетом, — критический путь (Guaranteed) остаётся. Объясни в README разницу с `OOMKilled` по собственному лимиту — два разных диагноза с одинаковым симптомом.
 
 ## Часть 8 — Докажи SLA под нагрузкой
 
