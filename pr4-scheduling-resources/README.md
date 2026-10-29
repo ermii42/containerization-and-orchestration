@@ -180,13 +180,35 @@ kubectl get events -n orders --field-selector reason=Preempted --sort-by='.lastT
 
 ## Часть 7 — Давление по памяти, порядок жертв
 
-Через `values.yaml` поднимием потребление `batch`, дождись давления по памяти на ноде. 
-Тк у меня не получается никак поймать Eviction, только OOMKIlled, изменим порог срабатывания eviction до 2 гб
-```
-minikube start --driver=docker --cpus=2 --memory=4096 --disk-size=20g --nodes=2 --extra-config=kubelet.eviction-hard="memory.available<2Gi"
-```
-Докажи, что eviction забирает `batch` первым — как менее защищённый Burstable-под с низким приоритетом, — критический путь (Guaranteed) остаётся. Объясни в README разницу с `OOMKilled` по собственному лимиту — два разных диагноза с одинаковым симптомом.
+Проверил давление по памяти на двух узлах Minikube. Сначала уменьшил число фоновых подов до нуля, чтобы освободить память и восстановить оператор CNPG. В values.yaml для batch задал рост памяти до 1000 МБ, requests.memory: 300Mi и limits.memory: 1280Mi (CPU: request 200m, limit 500m). Поэтому batch остаётся Burstable и имеет предел памяти; api и PostgreSQL остаются Guaranteed с PriorityClass orders-critical.
 
+**Настройка порога.** У каждой Docker-ноды лимит 4 ГиБ, но kubelet сообщает capacity около 16 ГиБ и при двух пустых от batch нодах показывал доступными примерно 14 ГиБ. Исходный порог memory.available<2Gi не успевает сработать до достижения контейнером ноды лимита 4 ГиБ, поэтому до этого получался OOMKilled. Для этого кластера выставил порог 13Gi по фактически наблюдаемой метрике kubelet. После остановки и повторного запуска Minikube проверил аргумент --eviction-hard=memory.available<13Gi у kubelet на обеих нодах. Это настройка учебного кластера с ошибочным учётом памяти; для кластера, где kubelet правильно видит 4 ГиБ, порог 13Gi не подходит.
+
+Применил настройку так (одного minikube start на работающем кластере оказалось недостаточно: аргумент уже запущенного kubelet оставался 2Gi):
+
+    minikube stop
+    minikube start --driver=docker --cpus=2 --memory=4096 --disk-size=20g --nodes=2 --extra-config='kubelet.eviction-hard=memory.available<13Gi'
+
+**Эксперимент.** Через Helm временно поднял batch до шести реплик (по три на каждой ноде), оставив лимит 1280Mi на контейнер:
+
+    helm upgrade orders ./orders-chart -n orders --reuse-values --set batch.replicas=6
+    kubectl describe nodes | grep -A3 MemoryPressure
+    kubectl get events -A --field-selector reason=Evicted --sort-by=.metadata.creationTimestamp
+    kubectl get pods -n orders -o wide
+    kubectl get cluster orders-postgres -n orders
+
+Оба узла показали MemoryPressure=True и событие EvictionThresholdMet («Attempting to reclaim memory»). В namespace orders увидел шесть событий Evicted, все для batch. Примеры из вывода:
+
+    pod/batch-699b4bcdcf-86f7c  Evicted  Threshold quantity: 13Gi; using 384300Ki; request 300Mi
+    pod/batch-699b4bcdcf-96nrj  Evicted  Threshold quantity: 13Gi; using 571336Ki; request 300Mi
+    pod/batch-699b4bcdcf-gd4g8  Evicted  Threshold quantity: 13Gi; using 928284Ki; request 300Mi
+
+У этих подов status.reason был Evicted, QoS — Burstable, PriorityClass — orders-batch (-100). В тот же момент Deployment api был 3/3 Available, все три пода api имели Ready 1/1 и QoS Guaranteed; orders-postgres-1 был Ready 1/1, CNPG показывал «Cluster in healthy state». Событий Evicted для api и PostgreSQL не было. При node pressure kubelet выбирает жертв с учётом превышения потребления над request и приоритета; batch использовал больше своих 300Mi и имел низкий приоритет. Это наблюдение подтверждает порядок жертв в данном эксперименте.
+
+**Evicted и OOMKilled — разные диагнозы.** Evicted означает, что kubelet удалил под из-за нехватки памяти на ноде: у пода status.reason=Evicted, а в событии указаны порог memory.available и потребление контейнера. OOMKilled означает, что контейнер превысил собственный limits.memory (или был убит OOM killer) и завершился с reason=OOMKilled; под может перезапуститься. В обоих случаях приложение кратковременно исчезает, но причину проверяют по status.reason, lastState.terminated.reason и событиям. В этом прогоне зафиксирован именно eviction: потребление показанных batch-подов было ниже лимита 1280Mi.
+
+После получения доказательств вернул batch.replicas: 2 в values.yaml и применил через Helm (helm upgrade orders ./orders-chart -n orders --reuse-values --set batch.replicas=2), чтобы прекратить повторное вытеснение. Итоговые значения сохраняют Burstable и лимиты, а для повторения опыта можно временно поставить шесть реплик.
+![alt text](image-10.png)
 ## Часть 8 — Докажи SLA под нагрузкой
 
 Параллельно с Частями 6–7 гони `k6`/`hey` по пути заказа, снимай графики задержки и ошибок. Сформулируй свой SLA (например, «95% заказов быстрее 300 мс даже под перегрузкой») и покажи графиками, что он держится, а деградирует именно `batch`.

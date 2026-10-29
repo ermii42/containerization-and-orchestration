@@ -86,10 +86,10 @@ worker:
 batch:
   image: ermii42/batch-analytics:0.1.0
   pullPolicy: IfNotPresent
-  replicas: 7
+  replicas: 2
   port: 8002
   cpuThreads: 2
-  memLimitMb: 800
+  memLimitMb: 1000
   memStepMb: 10
   memSleep: "1.0"
   priorityClassName: orders-batch
@@ -100,9 +100,9 @@ batch:
     requests:
       cpu: 200m
       memory: 300Mi
-    # limits:
-    #   cpu: 500m
-    #   memory: 1Gi
+    limits:
+      cpu: 500m
+      memory: 1280Mi
 
 # --- monitoring ---
 monitoring:
