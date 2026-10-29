@@ -18,6 +18,8 @@ spec:
         app: batch
         {{- toYaml .Values.commonLabels | nindent 8 }}
     spec:
+      priorityClassName: {{ .Values.batch.priorityClassName }}
+      terminationGracePeriodSeconds: 30
       {{- if eq .Values.scheduling.strategy "topologySpread" }}
       topologySpreadConstraints:
         - maxSkew: {{ .Values.scheduling.maxSkew }}
@@ -55,3 +57,9 @@ spec:
               containerPort: {{ .Values.batch.port }}
           resources:
             {{- toYaml .Values.batch.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop: ["ALL"]

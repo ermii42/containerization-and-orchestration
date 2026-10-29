@@ -9,6 +9,9 @@ spec:
   instances: {{ .Values.postgres.instances }}
   storage:
     size: {{ .Values.postgres.storage }}
+  priorityClassName: {{ .Values.postgres.priorityClassName }}
+  resources:
+    {{- toYaml .Values.postgres.resources | nindent 4 }}
   bootstrap:
     initdb:
       database: {{ .Values.postgres.database }}

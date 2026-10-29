@@ -7,13 +7,22 @@ commonLabels:
 
 # --- scheduling ---
 # strategy: podAntiAffinity | topologySpread
-# - podAntiAffinity: строгое "не более одного пода на узел" (жёсткий лимит)
-# - topologySpread: равномерное распределение с допустимым перекосом maxSkew
 scheduling:
-  strategy: topologySpread   # выбранный вариант
+  strategy: topologySpread
   maxSkew: 1
   topologyKey: kubernetes.io/hostname
-  whenUnsatisfiable: ScheduleAnyway   # ScheduleAnyway (мягко) или DoNotSchedule (жёстко)
+  whenUnsatisfiable: ScheduleAnyway
+
+# --- PriorityClass ---
+priorityClasses:
+  critical:
+    name: orders-critical
+    value: 1000000
+    description: "Critical revenue-path services (api, postgres)"
+  batch:
+    name: orders-batch
+    value: -100
+    description: "Batch workloads, lower priority than services"
 
 # --- Postgres (CNPG) ---
 postgres:
@@ -24,6 +33,18 @@ postgres:
   port: 5432
   instances: 1
   storage: 1Gi
+  priorityClassName: orders-critical
+  pdb:
+    enabled: true
+    minAvailable: 1
+  # Guaranteed QoS: requests == limits для cpu и memory
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 100m        # = requests → Guaranteed
+      memory: 256Mi    # = requests → Guaranteed
 
 # --- api ---
 api:
@@ -32,12 +53,18 @@ api:
   replicas: 3
   healthFail: "false"
   port: 8000
+  priorityClassName: orders-critical
+  pdb:
+    enabled: true
+    minAvailable: 2
+  # Guaranteed QoS: requests == limits для cpu и memory
   resources:
     requests:
       cpu: 57m
       memory: 100Mi
     limits:
-      memory: 100Mi
+      cpu: 57m         # = requests → Guaranteed
+      memory: 100Mi    # = requests → Guaranteed
 
 # --- worker ---
 worker:
@@ -47,6 +74,7 @@ worker:
   pollInterval: "1.0"
   maxAttempts: 5
   port: 8001
+  # worker не входит в задание (нет PDB/priority), оставляем Burstable
   resources:
     requests:
       cpu: 13m
@@ -64,6 +92,10 @@ batch:
   memLimitMb: 1024
   memStepMb: 50
   memSleep: "1.0"
+  priorityClassName: orders-batch
+  pdb:
+    enabled: false
+  # Burstable QoS: requests заметно ниже limits
   resources:
     requests:
       cpu: 100m
