@@ -33,7 +33,7 @@ podAntiAffinity оставлен как альтернатива для сцен
 
 Добавим в values.yaml блок batch, а также templates/batch-service.yaml и templates/batch-deployment.yaml
 
-![alt text](image.png)
+![alt text](src/image.png)
 
 ## Часть 3 — Реальные числа вместо угадывания
 
@@ -42,12 +42,12 @@ podAntiAffinity оставлен как альтернатива для сцен
 hey -z 2m -c 50 -m POST   -H "Content-Type: application/json"   -d '{"payload"
 :{"sku":"load-test","qty":1}}'   http://$(minikube ip):30080/order
 ```
-![alt text](image-1.png)
+![alt text](src/image-1.png)
 Запустим `krr` против своего namespace — он проанализирует реальное потребление `api`, `worker`, `postgres`. 
 ```
 krr simple -n orders -p http://127.0.0.1:9090
 ```
-![alt text](image-2.png)
+![alt text](src/image-2.png)
 ограничение: krr не анализирует CNPG Cluster, только стандартные workload'ы
 
 **Что говорит KRR:**
@@ -61,7 +61,7 @@ krr simple -n orders -p http://127.0.0.1:9090
 Пропишем рекомендованные значения в `values.yaml`, задеплоим через `helm upgrade`.
 ## Часть 4 — Разнесем критический сервис
 
-Примени механизм из Части 1 к `api`. Докажи (`kubectl get pods -o wide`), что реплики оказались на разных нодах. Опиши в README, как это повышает отказоустойчивость.
+Примени механизм из Части 1 к `api`. Докажем, что реплики оказались на разных нодах.
 
 Для начала пересоздадим кластер с несколькими нодами:
 ```
@@ -69,7 +69,7 @@ minikube delete
 
 minikube start --driver=docker --cpus=2 --memory=4096 --disk-size=20g --nodes=2
 ```
-![alt text](image-3.png)
+![alt text](src/image-3.png)
 Восстановим заново поды
 ```
 helm install prometheus prometheus-community/kube-prometheus-stack \
@@ -85,7 +85,7 @@ helm uninstall orders -n orders
 
 helm install orders ./orders-chart -n orders --create-namespace
 ```
-![alt text](image-4.png)
+![alt text](src/image-4.png)
 Minikube по умолчанию создаёт кластер с одной нодой. В такой конфигурации планировщик Kubernetes физически не может разместить реплики на разных нодах, даже если в манифесте заданы topologySpreadConstraints или podAntiAffinity. Для демонстрации распределения кластер был пересоздан с флагом --nodes=2
 
 **Как это повышает отказоустойчивость**
@@ -112,7 +112,7 @@ kubectl get pods -n orders -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{
 kubectl get pods -n orders -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.priorityClassName}{"\n"}{end}'
 ```
 
-![alt text](image-5.png)
+![alt text](src/image-5.png)
 
 
 **Что даёт каждая настройка и порядок вытеснения?**
@@ -151,12 +151,12 @@ PDB защищает только от добровольных нарушени
 
 **Поднимем batch.replicas и получим Pending**
 Поднимем 100 реплик
-![alt text](image-6.png)
+![alt text](src/image-6.png)
 Проверим причиину
 ```
 kubectl describe pod -n orders batch-859d6f95dd-x5cj9 | tail -20
 ```
-![alt text](image-7.png)
+![alt text](src/image-7.png)
 Это происходит потому, что планировщик вычитает requests каждого уже запущенного пода из Allocatable узла. Если сумма requests всех подов превышает Allocatable, новые поды не влезают 
 
 **Провоцируем preemption (вытеснение batch)**
@@ -172,44 +172,38 @@ kubectl apply -f high-priority-test.yaml
 ```
 kubectl get events -n orders --field-selector reason=Preempted --sort-by='.lastTimestamp'
 ```
-![alt text](image-8.png)
+![alt text](src/image-8.png)
 У вытесненного пода batch в событиях будет Preempted by <api-pod>. После того как batch завершит работу (или будет убит), api займёт его место.
 
 Убедимся, что batch-поды исчезли, а тестовый под запустился
-![alt text](image-9.png)
+![alt text](src/image-9.png)
 
 ## Часть 7 — Давление по памяти, порядок жертв
 
-Проверил давление по памяти на двух узлах Minikube. Сначала уменьшил число фоновых подов до нуля, чтобы освободить память и восстановить оператор CNPG. В values.yaml для batch задал рост памяти до 1000 МБ, requests.memory: 300Mi и limits.memory: 1280Mi (CPU: request 200m, limit 500m). Поэтому batch остаётся Burstable и имеет предел памяти; api и PostgreSQL остаются Guaranteed с PriorityClass orders-critical.
 
-**Настройка порога.** У каждой Docker-ноды лимит 4 ГиБ, но kubelet сообщает capacity около 16 ГиБ и при двух пустых от batch нодах показывал доступными примерно 14 ГиБ. Исходный порог memory.available<2Gi не успевает сработать до достижения контейнером ноды лимита 4 ГиБ, поэтому до этого получался OOMKilled. Для этого кластера выставил порог 13Gi по фактически наблюдаемой метрике kubelet. После остановки и повторного запуска Minikube проверил аргумент --eviction-hard=memory.available<13Gi у kubelet на обеих нодах. Это настройка учебного кластера с ошибочным учётом памяти; для кластера, где kubelet правильно видит 4 ГиБ, порог 13Gi не подходит.
-
-Применил настройку так (одного minikube start на работающем кластере оказалось недостаточно: аргумент уже запущенного kubelet оставался 2Gi):
-
-    minikube stop
+Применим настройку:
+```
+minikube stop
     minikube start --driver=docker --cpus=2 --memory=4096 --disk-size=20g --nodes=2 --extra-config='kubelet.eviction-hard=memory.available<13Gi'
+```
 
-**Эксперимент.** Через Helm временно поднял batch до шести реплик (по три на каждой ноде), оставив лимит 1280Mi на контейнер:
+**Эксперимент.** Через Helm временно поднимем batch до 6 реплик, оставив лимит 1280Mi на контейнер:
+```
+helm upgrade orders ./orders-chart -n orders --reuse-values --set batch.replicas=6
+```
 
-    helm upgrade orders ./orders-chart -n orders --reuse-values --set batch.replicas=6
-    kubectl describe nodes | grep -A3 MemoryPressure
-    kubectl get events -A --field-selector reason=Evicted --sort-by=.metadata.creationTimestamp
-    kubectl get pods -n orders -o wide
-    kubectl get cluster orders-postgres -n orders
-
-Оба узла показали MemoryPressure=True и событие EvictionThresholdMet («Attempting to reclaim memory»). В namespace orders увидел шесть событий Evicted, все для batch. Примеры из вывода:
-
-    pod/batch-699b4bcdcf-86f7c  Evicted  Threshold quantity: 13Gi; using 384300Ki; request 300Mi
-    pod/batch-699b4bcdcf-96nrj  Evicted  Threshold quantity: 13Gi; using 571336Ki; request 300Mi
-    pod/batch-699b4bcdcf-gd4g8  Evicted  Threshold quantity: 13Gi; using 928284Ki; request 300Mi
+```
+kubectl get events -A --field-selector reason=Evicted --sort-by=.metadata.creationTimestamp
+```
+![alt text](src/image-10.png)
+Оба узла показали MemoryPressure=True и событие EvictionThresholdMet («Attempting to reclaim memory»). В namespace orders увидел шесть событий Evicted, все относятся к batch.
 
 У этих подов status.reason был Evicted, QoS — Burstable, PriorityClass — orders-batch (-100). В тот же момент Deployment api был 3/3 Available, все три пода api имели Ready 1/1 и QoS Guaranteed; orders-postgres-1 был Ready 1/1, CNPG показывал «Cluster in healthy state». Событий Evicted для api и PostgreSQL не было. При node pressure kubelet выбирает жертв с учётом превышения потребления над request и приоритета; batch использовал больше своих 300Mi и имел низкий приоритет. Это наблюдение подтверждает порядок жертв в данном эксперименте.
 
 **Evicted и OOMKilled — разные диагнозы.** Evicted означает, что kubelet удалил под из-за нехватки памяти на ноде: у пода status.reason=Evicted, а в событии указаны порог memory.available и потребление контейнера. OOMKilled означает, что контейнер превысил собственный limits.memory (или был убит OOM killer) и завершился с reason=OOMKilled; под может перезапуститься. В обоих случаях приложение кратковременно исчезает, но причину проверяют по status.reason, lastState.terminated.reason и событиям. В этом прогоне зафиксирован именно eviction: потребление показанных batch-подов было ниже лимита 1280Mi.
 
-После получения доказательств вернул batch.replicas: 2 в values.yaml и применил через Helm (helm upgrade orders ./orders-chart -n orders --reuse-values --set batch.replicas=2), чтобы прекратить повторное вытеснение. Итоговые значения сохраняют Burstable и лимиты, а для повторения опыта можно временно поставить шесть реплик.
-![alt text](image-10.png)
-## Часть 8 — Докажи SLA под нагрузкой
+
+## Часть 8 — Докажем SLA под нагрузкой
 
 **SLA для этого опыта:** при восьми параллельных клиентах и конкуренции с шестью `batch`-репликами не менее 95% запросов `POST /order` завершаются за 300 мс, а доля HTTP 5xx равна нулю. Это проверка конкретной нагрузки и двухнодового учебного кластера, а не гарантия для любого потока запросов.
 
@@ -233,32 +227,21 @@ kubectl get events -n orders --field-selector reason=Evicted \
 `hey` выполнил 6516 запросов за 100,08 с (65,11 запросов/с), все ответы `201`; p95 = **201,8 мс**, p99 = 298,7 мс. На пике `api` оставался **3/3 Available**, а `batch` — **1/6 Available**. В событиях появились новые `Evicted` для `batch`; например, под `batch-699b4bcdcf-xr5fl` был вытеснен при потреблении 1030928 Ki и request 300 Mi. 
 Так сервис заказа выдержал заданный SLA, а фоновая нагрузка потеряла ёмкость.
 
-![Задержка p95, ошибки и доступные реплики во время опыта](sla-pressure.svg)
+![Задержка p95, ошибки и доступные реплики во время опыта](src/sla-pressure.svg)
 
-График построен из `Prometheus /api/v1/query_range` с шагом 15 секунд. У серии 5xx нет значений, потому что ошибок не было; нулевая линия подтверждена распределением кодов `hey` (6516 ответов `201`). 
+График построен из `Prometheus /api/v1/query_range` с шагом 15 секунд. У серии 5xx нет значений, потому что ошибок не было; нулевая линия подтверждена распределением кодов `hey` (6516 ответов `201`). `
 
-
-Для повторной проверки в Grafana откройте дашборд **Orders SLA under load** или выполните запросы PromQL:
-
-```promql
-histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{namespace="orders",job="api",method="POST",path="/order"}[2m])))
-(sum(rate(http_requests_total{namespace="orders",job="api",path="/order",status=~"5.."}[2m])) / clamp_min(sum(rate(http_requests_total{namespace="orders",job="api",path="/order"}[2m])), 0.001)) or vector(0)
-kube_deployment_status_replicas_available{namespace="orders",deployment=~"api|batch"}
-kube_deployment_spec_replicas{namespace="orders",deployment="batch"}
-```
-
-После опыта восстановим штатную конфигурацию и проверим её:
+После опыта восстановим штатную конфигурацию:
 
 ```bash
 helm upgrade orders ./orders-chart -n orders --wait --timeout 5m
-kubectl get deploy -n orders api batch
 ```
 
 ## Часть 9 — Мониторинг
 
 В чарт добавлены `ServiceMonitor` для `api` и `worker`, `PrometheusRule` с тремя алертами и ConfigMap с JSON-дашбордом Grafana. Prometheus из Лабы 2 выбирает `ServiceMonitor` из namespace `orders` и правила с меткой `release: prometheus`.
 
-В `values.yaml` указан `orders-worker:monitoring-fixed`. После пересоздания Minikube образ нужно собрать снова перед `helm upgrade`.
+В `values.yaml` указан `orders-worker:monitoring-fixed`. После пересоздания Minikube соберем образ снова перед `helm upgrade`.
 
 | Алерт | Условие и выдержка | Зачем нужен |
 |---|---|---|
@@ -266,21 +249,26 @@ kubectl get deploy -n orders api batch
 | `OrdersApiHighErrorRate` | Доля HTTP 5xx для `/order` выше 5% в течение 2 минут | Улавливает функциональную деградацию, даже когда поды формально Running. |
 | `OrdersBatchDegraded` | Available-реплик `batch` меньше желаемого числа 1 минуту | Показывает, что фоновая работа уступила ресурсы критическому пути. |
 
-Дашборд создаётся через Helm: шаблон `templates/grafana-dashboard.yaml` помещает `files/orders-sla.json` в ConfigMap с меткой `grafana_dashboard: "1"`. Sidecar установленного `kube-prometheus-stack` автоматически подхватывает ConfigMap во всех namespace. На дашборде есть p95 задержки, доля 5xx, доступные API-реплики и доступные/желаемые batch-реплики. 
+Дашборд создаётся через Helm: шаблон `templates/grafana-dashboard.yaml` помещает `files/orders-sla.json` в ConfigMap с меткой `grafana_dashboard: "1"`. На дашборде есть p95 задержки, доля 5xx, доступные API-реплики и доступные/желаемые batch-реплики. 
 Открыть Grafana можно через:
 
 ```
-kubectl -n monitoring port-forward svc/prometheus-grafana 3000:80
+kubectl -n monitoring port-forward svc/prometheus-grafana 3000:80 --address 0.0.0.0
 ```
-Затем открыть http://localhost:3000/d/orders-sla-lab4/orders-sla-under-load
-
-Для проверки алерта повторим нагрузку на `batch` из Части 8 и подождём дольше минуты плюс интервал оценки Prometheus. Затем пробросим порт Prometheus и запросим состояние:
-
-```bash
-kubectl -n monitoring port-forward svc/prometheus-kube-prometheus-prometheus 19090:9090
-# В другом терминале:
-curl -sG --data-urlencode 'query=ALERTS{alertname="OrdersBatchDegraded"}' \
-  http://127.0.0.1:19090/api/v1/query
+Для получения сгенерированного пароля:
 ```
+kubectl get secret -n monitoring prometheus-grafana -o jsonpath="{.data.admin-password}" | base64 -d ; echo
+```
+Затем открываем 
+http://localhost:3000/d/orders-sla-lab4/orders-sla-under-load
 
-В этом опыте ответ содержал `"alertname":"OrdersBatchDegraded","alertstate":"firing","deployment":"batch","namespace":"orders"` при `api` 3/3 и `batch` 1/6. После проверки вернём `batch.replicas=2` командой `helm upgrade orders ./orders-chart -n orders --wait --timeout 5m`.
+![alt text](src/image-11.png)
+
+Для проверки срабатываня алерта OrdersBatchDegraded повторим нагрузку на `batch` из Части 8 и подождём дольше минуты плюс интервал оценки Prometheus.
+
+Затем пробосим порт:
+```
+kubectl -n monitoring port-forward svc/prometheus-kube-prometheus-prometheus 9091:9090
+```
+И посмотрим состояние алертов:
+![alt text](src/image-12.png)
