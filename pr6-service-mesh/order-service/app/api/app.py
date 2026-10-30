@@ -1,4 +1,5 @@
 import os
+import random
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -18,6 +19,9 @@ from prometheus_client import (
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 HEALTH_FAIL_ENV = "HEALTH_FAIL"
+VERSION = os.getenv("VERSION", "v1")
+FAIL = os.getenv("FAIL", "false").lower() == "true"
+FLAKY = os.getenv("FLAKY", "false").lower() == "true"
 
 
 def _health_failing() -> bool:
@@ -28,12 +32,12 @@ def _health_failing() -> bool:
 HTTP_REQUESTS = Counter(
     "http_requests_total",
     "Total HTTP requests",
-    ["method", "path", "status"],
+    ["method", "path", "status", "version"],
 )
 HTTP_REQUEST_DURATION = Histogram(
     "http_request_duration_seconds",
     "HTTP request duration",
-    ["method", "path"],
+    ["method", "path", "version"],
 )
 ORDERS_CREATED = Counter(
     "orders_created_total",
@@ -75,12 +79,19 @@ async def metrics_middleware(request: Request, call_next):
             method=request.method,
             path=request.url.path,
             status=str(response.status_code),
+            version=VERSION,
         ).inc()
         HTTP_REQUEST_DURATION.labels(
             method=request.method,
             path=request.url.path,
+            version=VERSION,
         ).observe(elapsed)
     return response
+
+
+@app.get("/version")
+async def version():
+    return {"version": VERSION}
 
 
 @app.get("/health")
@@ -114,6 +125,10 @@ async def metrics():
 
 @app.post("/order", status_code=status.HTTP_201_CREATED)
 async def create_order(order: OrderIn):
+    if VERSION == "v2" and FAIL:
+        raise HTTPException(status_code=500, detail="v2 failure injection")
+    if VERSION == "v1" and FLAKY and random.random() < 0.3:
+        raise HTTPException(status_code=500, detail="v1 transient failure injection")
     pool: AsyncConnectionPool = app.state.pool
     async with pool.connection() as conn:
         async with conn.cursor() as cur:

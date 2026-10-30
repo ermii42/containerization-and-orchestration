@@ -1,66 +1,54 @@
+{{- $root := . }}
+{{- range $version := list "v1" "v2" }}
+{{- if or (eq $version "v1") $root.Values.api.v2.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: api
-  namespace: {{ .Values.namespace }}
+  name: api-{{ $version }}
+  namespace: {{ $root.Values.namespace }}
   labels:
-    {{- include "orders.labels" . | nindent 4 }}
+    {{- include "orders.labels" $root | nindent 4 }}
     app: api
+    version: {{ $version }}
 spec:
-  replicas: {{ .Values.api.replicas }}
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+  replicas: {{ if eq $version "v1" }}{{ $root.Values.api.replicas }}{{ else }}{{ $root.Values.api.v2.replicas }}{{ end }}
   selector:
     matchLabels:
       app: api
-      app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
+      version: {{ $version }}
   template:
     metadata:
       labels:
         app: api
-        {{- toYaml .Values.commonLabels | nindent 8 }}
+        version: {{ $version }}
+        {{- toYaml $root.Values.commonLabels | nindent 8 }}
+      annotations:
+        linkerd.io/inject: {{ ternary "enabled" "disabled" $root.Values.mesh.enabled | quote }}
     spec:
-      priorityClassName: {{ .Values.api.priorityClassName }}
-      terminationGracePeriodSeconds: 30
-      {{- if eq .Values.scheduling.strategy "topologySpread" }}
-      topologySpreadConstraints:
-        - maxSkew: {{ .Values.scheduling.maxSkew }}
-          topologyKey: {{ .Values.scheduling.topologyKey }}
-          whenUnsatisfiable: {{ .Values.scheduling.whenUnsatisfiable }}
-          labelSelector:
-            matchLabels:
-              app: api
-              app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
-      {{- else if eq .Values.scheduling.strategy "podAntiAffinity" }}
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchLabels:
-                  app: api
-                  app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
-              topologyKey: {{ .Values.scheduling.topologyKey }}
-      {{- end }}
+      priorityClassName: {{ $root.Values.api.priorityClassName }}
       containers:
         - name: api
-          image: {{ .Values.api.image }}
-          imagePullPolicy: {{ .Values.api.pullPolicy }}
+          image: {{ $root.Values.api.image }}
+          imagePullPolicy: {{ $root.Values.api.pullPolicy }}
           env:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: orders-postgres-app
                   key: uri
+            - name: VERSION
+              value: {{ $version | quote }}
+            - name: FAIL
+              value: {{ if eq $version "v2" }}{{ $root.Values.api.v2.fail | quote }}{{ else }}"false"{{ end }}
+            - name: FLAKY
+              value: {{ if eq $version "v1" }}{{ $root.Values.api.flaky | quote }}{{ else }}"false"{{ end }}
             - name: HEALTH_FAIL
-              value: {{ .Values.api.healthFail | quote }}
+              value: {{ $root.Values.api.healthFail | quote }}
           ports:
             - name: http
-              containerPort: {{ .Values.api.port }}
+              containerPort: {{ $root.Values.api.port }}
           resources:
-            {{- toYaml .Values.api.resources | nindent 12 }}
+            {{- toYaml $root.Values.api.resources | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -72,15 +60,12 @@ spec:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 2
             periodSeconds: 5
-            timeoutSeconds: 3
-            failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /livez
               port: http
-            initialDelaySeconds: 10
             periodSeconds: 10
-            timeoutSeconds: 3
-            failureThreshold: 3
+---
+{{- end }}
+{{- end }}

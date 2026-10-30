@@ -11,8 +11,7 @@ metadata:
 spec:
   selector:
     matchLabels:
-      app: api
-      app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
+      monitoring: api
   namespaceSelector:
     matchNames:
       - {{ .Values.namespace }}

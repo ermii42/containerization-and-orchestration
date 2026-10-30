@@ -1,55 +1,122 @@
-# Лаба 6 — Автопилот релиза: катит хорошее, откатывает плохое
+# Практика 6 — service mesh и автопилот релиза
 
-## Ситуация
 
-Service mesh обещает шифрование, надёжность и умное управление трафиком без правок кода. В этой лабе ты проверяешь всё это делом на `api` из чарта `shop`: сначала доказываешь, что mesh даёт шифрование и надёжность бесплатно, потом строишь поверх него самоуправляемый канареечный релиз — новая версия получает малую долю трафика, скрипт-гейт сам следит за её здоровьем и автоматически докатывает при успехе или откатывает при росте ошибок, без человека. В конце — честный подсчёт цены: во сколько (задержка, ресурсы) обошлась вся эта магия, и вердикт, нужен ли здесь mesh вообще.
 
-Лаба облегчена под скромный ноутбук: одноузловой кластер, лёгкий mesh, mesh только вокруг `api`. Всё разворачивается через Helm-чарт `shop` из Лабы 3 — версии, traffic split, mesh-объекты — тоже его шаблоны и значения, а не отдельные манифесты.
+## Часть 0 — Сервисы и гейт
 
-## Часть 0 — Сервисы
+В `order-service/app/api/app.py` добавлены `GET /version`, переменные `VERSION`, `FAIL`, `FLAKY`. v1 при `FLAKY=true` случайно возвращает 500 на 30% вызовов `POST /order` до записи в БД; v2 при `FAIL=true` возвращает 500 на каждом вызове. `GET /health`, `GET /orders`, `POST /order` сохранены. Метрики запросов и задержки содержат label `version`. Оба варианта используют один образ с разным окружением. Ошибка вводится до изменения состояния БД, поэтому повтор POST в этом опыте не создаёт дубль; в обычном приложении нужен идемпотентный ключ.
 
-Расширь `api` (генерируется AI целиком, реализация не оценивается):
+`gate.py` каждые 15 секунд читает Prometheus и меняет веса HTTPRoute; контейнерный вариант описан в `Dockerfile.gate` (для запуска нужен Kubernetes ServiceAccount с правом patch HTTPRoute). `bench.py` измеряет baseline, `reliability.py` сравнивает ошибки backend и клиента на одном наборе запросов, `plot_results.py` строит SVG.
 
-- `GET /version` — возвращает `v1` или `v2`;
-- у v2 — переключатель `FAIL=true`, который заставляет `POST /order` возвращать 500 (понадобится для отката);
-- у v1 — отдельный переключатель `FLAKY=true`, который заставляет часть запросов (реально, на уровне кода) падать со случайной ошибкой (понадобится для части про надёжность);
-- обычные `GET /health`, `POST /order`, `GET /orders`.
+```bash
+python3 -m py_compile pr6-service-mesh/order-service/app/api/app.py
+minikube image build -t orders-api:pr6 pr6-service-mesh/order-service/app/api
+minikube image build --node minikube-m02 -t orders-api:pr6 pr6-service-mesh/order-service/app/api
+```
 
-Сгенерируй также маленький скрипт-гейт: раз в ~15 секунд читает из Prometheus долю ошибок и задержку версии v2 и меняет разделение трафика по простому правилу.
+Образ собран на обоих узлах, поскольку pod может оказаться на любом из них. Dockerfile гейта проверен командой `docker build -f pr6-service-mesh/Dockerfile.gate -t orders-gate:pr6 pr6-service-mesh`.
 
-## Часть 1 — Выбери mesh
+## Часть 1 — Выбор mesh
 
-Выбери один лёгкий mesh и обоснуй в README:
+Выбран **Linkerd edge-26.10.2**: для задачи нужны mTLS, наблюдаемые повторы и взвешенный HTTPRoute; прокси внедряется только в API и тестовый клиент. Linkerd поддерживает [mTLS](https://linkerd.io/docs/features/automatic-mtls/), [retry-аннотации](https://linkerd.io/docs/reference/retries/) и [HTTPRoute](https://linkerd.io/docs/reference/httproute/). Установлены совместимые Gateway API CRD v1.2.1.
 
-- **Linkerd** — очень лёгкий, простой в установке;
-- **Istio ambient** — sidecarless-режим Istio.
+```bash
+curl --proto '=https' --tlsv1.2 -sSfL https://run.linkerd.io/install-edge | sh
+export PATH=$PATH:/home/ermii42/.linkerd2/bin
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+linkerd check --pre
+linkerd install --crds | kubectl apply -f -
+linkerd install | kubectl apply -f -
+linkerd check
+```
 
-## Часть 2 — Замерь baseline
+`linkerd check` завершился успешно. Проверка доступности сервера версий вывела предупреждение из-за TLS timeout; компоненты control plane прошли проверку. [Инструкция Linkerd](https://linkerd.io/docs/getting-started/).
 
-Разверни через чарт `api` v1 и `postgres`, без mesh. Прогони нагрузку по пути заказа, зафиксируй исходную задержку и потребление ресурсов `api` — точка отсчёта для Части 8.
+## Часть 2 — Baseline без mesh
 
-## Часть 3 — Включи mesh и mTLS
+Был запущен только API v1 и существующий Postgres. Worker имеет 0 реплик. Временные значения: `mesh.enabled=false`, `mesh.clientEnabled=false`, `api.v2.enabled=false`.
 
-Заведи `api` в mesh через чарт (нужные лейблы/аннотации — тоже значения `values.yaml`). Включи mTLS и докажи, что трафик между подами `api` теперь зашифрован, а identity подтверждается сертификатом, а не IP.
+```bash
+helm upgrade --install --reset-values orders pr6-service-mesh/order-service/orders-chart -n orders --wait --timeout 180s --set mesh.enabled=false --set mesh.clientEnabled=false --set api.v2.enabled=false
+curl -s http://192.168.49.2:30080/version
+python3 pr6-service-mesh/bench.py http://192.168.49.2:30080 200 | tee pr6-service-mesh/baseline.json
+kubectl -n orders exec deployment/api-v1 -c api -- cat /sys/fs/cgroup/memory.current
+kubectl -n monitoring port-forward svc/prometheus-kube-prometheus-prometheus 9090:9090 >/tmp/pr6-portforward.log 2>&1 &
+curl -G http://localhost:9090/api/v1/query --data-urlencode 'query=sum(rate(container_cpu_usage_seconds_total{namespace="orders",container="api",pod=~"api-v1.*"}[1m]))' --data-urlencode 'time=1793386830'
+```
 
-## Часть 4 — Надёжность бесплатно
+Результат 200 последовательных POST: **200 ответов 201**, p50 **2,95 мс**, p95 **74,34 мс**, среднее **11,01 мс**. После нагрузки память API — **43 565 056 байт (41,55 MiB)**. Prometheus показал **0,01666 CPU core (16,66m)** для минутного окна около 19:00:30 UTC. CPU request/limit — 200m. Данные сохранены в `baseline.json` и `baseline-resource.json`. Нагрузка шла с ВМ на NodePort без прокси.
 
-Включи на v1 режим `FLAKY=true`. Одним графиком докажи: backend реально возвращает ошибку на заметную долю запросов, а клиент почти этого не видит. В README разбери, за счёт какого именно механизма mesh (retries, circuit breaking/outlier detection, или обоих сразу) это произошло, и как ты это определил по метрикам самого mesh.
+## Часть 3 — mTLS и identity
 
-## Часть 5 — Разверни v1/v2 и раздели трафик
+Аннотация `linkerd.io/inject: enabled` задаётся в шаблоне Deployment из `mesh.enabled`. В mesh включены API и `mesh-client`; Postgres и worker не инжектируются. На каждом meshed pod видно два контейнера.
 
-Через чарт разверни v1 и v2 одновременно, настрой traffic split как объект mesh (тоже шаблон чарта). Старт — 90% на v1, 10% на v2. Проверь по `GET /version`, что запросы делятся именно в этой пропорции.
+```bash
+helm upgrade --reset-values orders pr6-service-mesh/order-service/orders-chart -n orders --force-conflicts --wait --timeout 180s --set mesh.enabled=true --set mesh.clientEnabled=true --set api.v2.enabled=false
+kubectl -n orders get pods -l 'app in (api,mesh-client)'
+linkerd identity -n orders -l app=api
+kubectl -n orders exec deployment/mesh-client -c client -- curl -s http://localhost:4191/metrics | grep 'tls="true"' | head
+```
 
-## Часть 6 — Собери автопилот
+Сертификат API: `Subject: CN=default.orders.serviceaccount.identity.linkerd.cluster.local`, `Issuer: CN=identity.linkerd.`, SAN содержит тот же DNS identity, расширения разрешают TLS server/client authentication. Прокси клиента показал `request_total` к API с `tls="true"` и `server_id="default.orders.serviceaccount.identity.linkerd.cluster.local"` (159 запросов на момент проверки). Это подтверждает шифрование и проверку сервисной identity сертификатом; IP в метрике — адрес доставки, а не удостоверение сервиса.
 
-Запусти скрипт-гейт. Задай в нём простое, но осмысленное правило (например: доля ошибок v2 ниже порога — поднять её долю на шаг; выше — откатить в 0). В README опиши логику гейта словами: на какие метрики он смотрит и как принимает решение.
+## Часть 4 — Надёжность через retries
 
-## Часть 7 — Проверь оба сценария
+Сервис `api-v1` в чарте имеет `retry.linkerd.io/http: "500-504"` и `retry.linkerd.io/limit: "3"`. При `FLAKY=true` запущены 300 POST с meshed-клиента прямо в `api-v1`. Скрипт `reliability.py` снял счётчики приложения и прокси до и после ровно этого прогона.
 
-1. **Плохой релиз:** выкати v2 с `FAIL=true`. Покажи, что гейт сам откатил трафик обратно на v1.
-2. **Хороший релиз:** выкати здоровую v2 (`FAIL=false`). Покажи, что гейт сам довёл её долю до 100%.
+```bash
+helm upgrade --reset-values orders pr6-service-mesh/order-service/orders-chart -n orders --force-conflicts --set api.flaky=true --wait --timeout 180s
+python3 pr6-service-mesh/reliability.py
+helm upgrade --reset-values orders pr6-service-mesh/order-service/orders-chart -n orders --force-conflicts --wait --timeout 180s
+```
 
-Графики обоих сценариев — как менялась доля трафика v2 и доля ошибок.
+![Ошибки backend и клиента](reliability.svg)
+
+Backend обработал **412 попыток**, из них **112 ответов 500 (27,18%)**. Клиент получил **0 ответов 500 из 300**. Счётчик Linkerd `outbound_http_route_retry_requests_total` вырос на **112**. Значит, сработали повторы запросов. Circuit breaking/outlier detection в этом опыте не настраивались. Данные сохранены в `reliability.json`.
+
+## Часть 5 — Разделение 90/10
+
+Чарт создаёт Deployment `api-v1`/`api-v2`, Service `api-v1`/`api-v2`, общий Service `api` и `HTTPRoute/api-split` с весами из `api.v2.weight`. Клиент инжектирован в Linkerd: маршрутизация происходит в его outbound proxy. `HTTPRoute` принят контроллером (`Accepted=True`, `ResolvedRefs=True`).
+
+```bash
+helm upgrade --reset-values orders pr6-service-mesh/order-service/orders-chart -n orders --force-conflicts --wait --timeout 180s --set api.v2.enabled=true --set api.v2.weight=10 --set api.v2.fail=true --set mesh.loadEnabled=true
+kubectl -n orders get httproute api-split -o yaml
+kubectl -n orders exec deployment/mesh-client -c client -- sh -c 'for i in $(seq 1 200); do curl -s http://api.orders.svc.cluster.local/version; echo; done' | sort | uniq -c
+```
+
+При весах 90/10 получено **177 ответов v1 и 23 ответа v2** из 200 (88,5/11,5%).
+
+![Разделение трафика](traffic-split.svg)
+ Взвешенный выбор вероятностный, поэтому малое отклонение ожидаемо.
+
+## Часть 6 — Автопилот
+
+Гейт использует `http_requests_total{version="v2",service="api-v2",path="/order"}`: `increase(...[1m])` для числа запросов и статусов 5xx; `histogram_quantile(0.95, sum by (le)(rate(http_request_duration_seconds_bucket{...}[1m])))` для p95 задержки v2. Если в минутном окне меньше 10 запросов, гейт ждёт. Если доля 5xx больше 5%, ставит вес v2 в 0. Если ошибок не больше 5% и p95 не выше 0,5 с, прибавляет 20 процентных пунктов, максимум до 100. JSON Patch применяется к `HTTPRoute` каждые 15 с; решения и метрики пишутся в CSV.
+
+```bash
+kubectl -n monitoring port-forward svc/prometheus-kube-prometheus-prometheus 9090:9090 >/tmp/pr6-portforward.log 2>&1 &
+python3 pr6-service-mesh/gate.py --output pr6-service-mesh/bad-release.csv --seconds 180
+```
+
+Prometheus сканирует API каждые 30 с, поэтому сразу после создания нового pod гейт может видеть 0 наблюдений и ждёт данные. После `kubectl patch` Helm 4 при следующем upgrade может сообщить о конфликте владения `spec.rules`; для возврата весов из чарта использовались `helm upgrade --reset-values --force-conflicts`: первый флаг сбрасывает временные `--set`, второй возвращает управление полями маршрута Helm.
+
+## Часть 7 — Плохой и хороший релизы
+
+**Плохой релиз.** v2 с `FAIL=true` стартовала с 10%. После накопления метрик гейт увидел около 36 запросов за минуту и 100% ошибок v2, затем самостоятельно изменил веса **90/10 → 100/0** за 15 с. Подробные значения — в `bad-release.csv`.
+
+![Автоматический откат](bad-release.svg)
+
+**Хороший релиз.** v2 обновлена с `FAIL=false`, веса возвращены к 90/10 через чарт. После двух ожидающих итераций Prometheus гейт последовательно поднял v2 до **30, 50, 70, 90 и 100%**. На каждом шаге доля ошибок v2 была 0%, p95 приложения — 4,7–8,2 мс. Подробные значения — в `good-release.csv`.
+
+```bash
+helm upgrade --reset-values orders pr6-service-mesh/order-service/orders-chart -n orders --force-conflicts --wait --timeout 180s --set api.v2.weight=10 --set api.v2.fail=false --set mesh.loadEnabled=true
+python3 pr6-service-mesh/gate.py --output pr6-service-mesh/good-release.csv --seconds 180
+python3 pr6-service-mesh/plot_results.py
+helm upgrade --reset-values orders pr6-service-mesh/order-service/orders-chart -n orders --force-conflicts --wait --timeout 180s
+kubectl -n orders get httproute api-split -o jsonpath='{.spec.rules[0].backendRefs[*].weight}'
+```
+
+![Автоматический докат](good-release.svg)
 
 ## Часть 8 — Посчитай цену и вынеси вердикт
 
@@ -75,9 +142,3 @@ Service mesh обещает шифрование, надёжность и умн
 - Обновлённый Helm-чарт `shop`: версии `api`, объект traffic split, mesh-аннотации, `ServiceMonitor`/`PrometheusRule`, финальный `values.yaml`.
 - `README.md`: выбор mesh и почему (Часть 1); baseline (Часть 2); доказательство mTLS (Часть 3); доказательство retries/circuit breaking и какой механизм сработал (Часть 4); деление трафика (Часть 5); логика гейта (Часть 6); результаты обоих сценариев с графиками (Часть 7); цена mesh и вердикт (Часть 8); 3 алерта и обоснование (Часть 9).
 - Скриншоты: подтверждение шифрования; график надёжности при `FLAKY=true`; деление трафика 90/10 по `/version`; автоматический откат плохой v2; автоматический докат здоровой v2; сравнение baseline и с mesh; дашборд.
-
-## Как начать
-
-Открой репозиторий с AI-ассистентом и попроси помочь с Лабой 6. Сгенерируй `api` v1/v2 и скрипт-гейт (Часть 0), дальше иди по порядку с Части 1. Ассистент ведёт по шагам и проверяет понимание, готовые правила и шаблоны чарта не выдаёт.
-
-> Пользуешься AI? Проверь, что ассистент следует правилам из [`AGENTS.md`](../AGENTS.md). Большинство инструментов подхватывают его сами; если нет — укажи ему на этот файл.

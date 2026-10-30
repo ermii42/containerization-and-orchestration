@@ -1,0 +1,5 @@
+{
+  "method": "same NodePort, 1000 sequential POST /order, api v1, Prometheus container_memory_usage_bytes and 1m rate(container_cpu_usage_seconds_total) at benchmark end",
+  "baseline": {"time_unix": 1793389391, "pod": "api-v1-6cfb9d4c8-pdwln", "api_memory_bytes": 42713088, "proxy_memory_bytes": 0, "api_cpu_cores": 0.0233, "proxy_cpu_cores": 0},
+  "mesh": {"time_unix": 1793389434, "pod": "api-v1-9698b4c7-hvz7r", "api_memory_bytes": 42770432, "proxy_memory_bytes": 3244032, "api_cpu_cores": 0.0228, "proxy_cpu_cores": 0.0118}
+}

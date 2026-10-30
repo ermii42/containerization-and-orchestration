@@ -1,0 +1,9 @@
+{
+  "client_total": 300,
+  "client_500": 0,
+  "backend_total": 412.0,
+  "backend_500": 112.0,
+  "mesh_retries": 112.0,
+  "backend_error_percent": 27.18,
+  "client_error_percent": 0.0
+}

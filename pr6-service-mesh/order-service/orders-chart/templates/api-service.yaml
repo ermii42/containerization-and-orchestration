@@ -1,18 +1,32 @@
+{{- $root := . }}
+{{- range $name := list "api" "api-v1" "api-v2" }}
+{{- if or (ne $name "api-v2") $root.Values.api.v2.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: api
-  namespace: {{ .Values.namespace }}
+  name: {{ $name }}
+  namespace: {{ $root.Values.namespace }}
   labels:
-    {{- include "orders.labels" . | nindent 4 }}
+    {{- include "orders.labels" $root | nindent 4 }}
     app: api
+    {{- if ne $name "api" }}
+    monitoring: api
+    {{- end }}
+  annotations:
+    retry.linkerd.io/http: "500-504"
+    retry.linkerd.io/limit: "3"
 spec:
-  type: NodePort
+  type: {{ if eq $name "api" }}NodePort{{ else }}ClusterIP{{ end }}
   selector:
     app: api
-    app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
+    version: {{ if eq $name "api-v2" }}v2{{ else }}v1{{ end }}
   ports:
     - name: http
       port: 80
       targetPort: http
+      {{- if eq $name "api" }}
       nodePort: 30080
+      {{- end }}
+---
+{{- end }}
+{{- end }}

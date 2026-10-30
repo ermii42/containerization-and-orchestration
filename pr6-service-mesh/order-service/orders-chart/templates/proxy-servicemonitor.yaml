@@ -1,0 +1,22 @@
+{{- if and .Values.monitoring.enabled .Values.mesh.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "orders.fullname" . }}-linkerd-proxy
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "orders.labels" . | nindent 4 }}
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      monitoring: linkerd-proxy
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  endpoints:
+    - port: proxy-metrics
+      path: /metrics
+      interval: {{ .Values.monitoring.proxyInterval | default "15s" }}
+      scrapeTimeout: 10s
+{{- end }}

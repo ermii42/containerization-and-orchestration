@@ -1,0 +1,198 @@
+{
+  "dashboard": {
+    "uid": "pr6-mesh-monitoring",
+    "title": "Practice 6 / Service mesh monitoring",
+    "tags": [
+      "pr6",
+      "linkerd",
+      "orders"
+    ],
+    "timezone": "utc",
+    "schemaVersion": 41,
+    "version": 0,
+    "refresh": "30s",
+    "time": {
+      "from": "now-15m",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Order error rate by version",
+        "type": "timeseries",
+        "gridPos": {
+          "x": 0,
+          "y": 0,
+          "w": 12,
+          "h": 10
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "expr": "100 * ((sum by (version) (rate(http_requests_total{namespace=\"orders\",service=~\"api-v1|api-v2\",path=\"/order\",status=~\"5..\"}[2m])) or on(version) 0 * sum by (version) (rate(http_requests_total{namespace=\"orders\",service=~\"api-v1|api-v2\",path=\"/order\"}[2m]))) / clamp_min(sum by (version) (rate(http_requests_total{namespace=\"orders\",service=~\"api-v1|api-v2\",path=\"/order\"}[2m])), 0.001))",
+            "legendFormat": "{{version}}",
+            "range": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100
+          },
+          "overrides": []
+        },
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom"
+          },
+          "tooltip": {
+            "mode": "single"
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Order p95 latency by version",
+        "type": "timeseries",
+        "gridPos": {
+          "x": 12,
+          "y": 0,
+          "w": 12,
+          "h": 10
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "expr": "1000 * histogram_quantile(0.95, sum by (version, le) (rate(http_request_duration_seconds_bucket{namespace=\"orders\",service=~\"api-v1|api-v2\",path=\"/order\"}[2m])))",
+            "legendFormat": "{{version}}",
+            "range": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ms",
+            "min": 0
+          },
+          "overrides": []
+        },
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom"
+          },
+          "tooltip": {
+            "mode": "single"
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Observed Linkerd backend traffic split",
+        "type": "timeseries",
+        "gridPos": {
+          "x": 0,
+          "y": 10,
+          "w": 12,
+          "h": 10
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "expr": "100 * sum by (dst_service) (rate(request_total{namespace=\"orders\",service=\"mesh-client-proxy\",direction=\"outbound\",dst_service=~\"api-v1|api-v2\"}[2m])) / scalar(clamp_min(sum(rate(request_total{namespace=\"orders\",service=\"mesh-client-proxy\",direction=\"outbound\",dst_service=~\"api-v1|api-v2\"}[2m])), 0.001))",
+            "legendFormat": "{{dst_service}}",
+            "range": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100
+          },
+          "overrides": []
+        },
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom"
+          },
+          "tooltip": {
+            "mode": "single"
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Linkerd mTLS share to API",
+        "type": "timeseries",
+        "gridPos": {
+          "x": 12,
+          "y": 10,
+          "w": 12,
+          "h": 10
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "expr": "100 * sum(rate(request_total{namespace=\"orders\",service=\"mesh-client-proxy\",direction=\"outbound\",dst_service=~\"api-v1|api-v2\",tls=\"true\"}[2m])) / clamp_min(sum(rate(request_total{namespace=\"orders\",service=\"mesh-client-proxy\",direction=\"outbound\",dst_service=~\"api-v1|api-v2\"}[2m])), 0.001)",
+            "legendFormat": "mTLS %",
+            "range": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100
+          },
+          "overrides": []
+        },
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom"
+          },
+          "tooltip": {
+            "mode": "single"
+          }
+        }
+      }
+    ]
+  },
+  "overwrite": true,
+  "message": "Practice 6 monitoring dashboard"
+}
