@@ -26,29 +26,54 @@ kubectl -n kube-system get daemonset cilium
 
 ```bash
 helm upgrade --install orders ./order-service/orders-chart -n orders --create-namespace --set networkPolicy.enabled=false
+```
+Заглянем под капот плоской сети: IP пода и его eth0 изнутри, парный конец veth на ноде, и что поды на разных нодах видят друг друга напрямую по IP.
 
+Посмотрим, какие есть поды:
+```
 kubectl -n orders get pods -o wide
-
+```
+Узнаем имена/IP нужных подов:
+```
 API=$(kubectl -n orders get pod -l app=api --field-selector spec.nodeName=minikube -o jsonpath='{.items[0].metadata.name}')
+
 PGIP=$(kubectl -n orders get pod orders-postgres-1 -o jsonpath='{.status.podIP}')
+```
+Сопоставлим veth пода API с интерфейсом на ноде, чтобы проверить, что veth правильно подключён к мосту/CNI.
+```
 kubectl -n orders exec "$API" -- sh -c 'hostname -i; cat /sys/class/net/eth0/iflink'
+
 minikube ssh -n minikube -- 'ip -o link'
+```
+![alt text](image.png)
+Проверим, что API может достучаться до Postgres по TCP
+```
 kubectl -n orders exec "$API" -- python -c 'import socket,sys; socket.create_connection((sys.argv[1],5432),timeout=3); print("cross-node TCP OK")' "$PGIP"
 ```
+![alt text](image-1.png)
 
-Cilium назначил `api-74bcb7d7f-xfzj6` IP `10.244.1.66` на ноде `minikube`. В pod `eth0` имеет `iflink=18`; на ноде интерфейс 18 — `lxc259d3fa69e98@if17`, парный конец veth. Прямое TCP-соединение к PostgreSQL `10.244.0.214:5432` на `minikube-m02` вернуло `cross-node TCP OK`. CNI создаёт сетевое пространство, IP и veth, Cilium проводит межнодовой трафик через `cilium_vxlan`. IP pod меняется при пересоздании, поэтому клиенту нужен Service.
-
-![Сеть pod и парный интерфейс на ноде](scripts/pod-network.svg)
+Cilium назначил `api-74bcb7d7f-xfzj6` IP `10.244.1.66` на ноде `minikube`. В pod `eth0` имеет `iflink=18`; на ноде интерфейс 18 — `lxc259d3fa69e98@if17`, парный конец veth.  CNI создаёт сетевое пространство, IP и veth, Cilium проводит межнодовой трафик через `cilium_vxlan`. IP pod меняется при пересоздании, поэтому клиенту нужен Service.
 
 ## Часть 2 — непрерывность Service при удалении pod
 
-`api` опубликован как NodePort: `api:80` направляет на container port `8000`, порт ноды — `30080`. `curl http://192.168.49.2:30080/health` вернул HTTP 200. NodePort открывает порт на нодах; LoadBalancer дополнительно получает внешний адрес балансировщика; headless Service (`clusterIP: None`) возвращает адреса endpoint и не балансирует через ClusterIP.
+Вынесем api наружу через NodePort — это точка входа клиента.
 
-Нагрузка шла **из pod `load-client` по DNS** `api.orders.svc.cluster.local` раз в 0,5 секунды, 60 секунд. Одновременно `scripts/chaos-pods.sh` каждые 8 секунд удалял случайный готовый pod `api` или `worker`. API удалялся только при наличии трёх готовых реплик. Первый пробный вариант выбирал любой `Running` pod и опустошал готовые endpoint; первый прогон с Cilium и порогом в две готовые реплики дал один отказ в момент удаления. После усиления порога до трёх реплик финальный прогон **в Cilium-кластере** дал **119 ответов HTTP 200, 0 ошибок, 8 удалений pod**. IP сменившихся pod есть в [журнале](scripts/chaos-final.csv), ответы — в [CSV](scripts/load-final.csv).
+`api` опубликован как NodePort: `api:80` направляет на container port `8000`, порт ноды — `30080`. 
+```
+curl http://192.168.49.2:30080/health
+```
+![alt text](image-2.png)
+NodePort открывает порт на нодах; LoadBalancer дополнительно получает внешний адрес балансировщика; headless Service (`clusterIP: None`) возвращает адреса endpoint и не балансирует через ClusterIP.
+
+Запустим скрипт, который в фоне раз в несколько секунд убивает случайный под api или worker — непрерывный хаос. Параллельно прогоним постоянную нагрузку клиента на сервис по имени через DNS:
+
+Нагрузка **из pod `load-client` по DNS** `api.orders.svc.cluster.local` раз в 0,5 секунды, 60 секунд. Одновременно `scripts/chaos-pods.sh` каждые 8 секунд удалял случайный готовый pod `api` или `worker`. API удалялся только при наличии трёх готовых реплик. Первый пробный вариант выбирал любой `Running` pod и опустошал готовые endpoint; первый прогон с Cilium и порогом в две готовые реплики дал один отказ в момент удаления. После усиления порога до трёх реплик финальный прогон **в Cilium-кластере** дал **119 ответов HTTP 200, 0 ошибок, 8 удалений pod**.
 
 ```bash
 kubectl -n orders run client --image=ermii42/orders-api:monitoring --restart=Never --labels=role=client --command -- sleep 3600
+
 kubectl -n orders wait --for=condition=Ready pod/client --timeout=90s
+
 kubectl -n orders exec -i client -- python -u - http://api.orders.svc.cluster.local/orders 60 < scripts/load-client.py > scripts/load-final.csv &
 scripts/chaos-pods.sh orders 60 8 scripts/chaos-final.csv &
 wait
@@ -58,9 +83,10 @@ awk -F, 'NR>1{n++; if($2!=200)bad++} END{print n,bad+0}' scripts/load-final.csv
 kubectl -n kube-system get cm kube-proxy -o yaml | grep -A5 'mode:'
 ```
 
-![Запросы и удаления pod](scripts/chaos-final.svg)
+![Запросы и удаления pod](src/img/chaos-final.svg)
+ IP сменившихся pod есть в [журнале](src/chaos-final.csv), ответы — в [CSV](src/load-final.csv).
 
-CoreDNS разрешает имя Service в ClusterIP, EndpointSlice хранит IP **готовых** pod, а Service и `kube-proxy` направляют соединение к endpoint. `kube-proxy` здесь работает в режиме **iptables** (`mode: iptables`), Cilium — с `kube-proxy-replacement=false`. IPVS обычно заметен при большом числе Service и endpoint, когда обновление длинных цепочек iptables становится дорогим; в этом кластере разница мала. Прямой `kubectl delete pod` обходит PodDisruptionBudget, поэтому скрипт сам контролирует число готовых API.
+CoreDNS разрешает имя Service в ClusterIP, EndpointSlice хранит IP готовых pod, а Service и kube-proxy направляют соединение к endpoint. kube-proxy здесь работает в режиме iptables (mode: iptables), Cilium — с kube-proxy-replacement=false. IPVS обычно заметен при большом числе Service и endpoint, когда обновление длинных цепочек iptables становится дорогим; в этом кластере разница мала. Прямой kubectl delete pod обходит PodDisruptionBudget, поэтому скрипт сам контролирует число готовых API.
 
 ## Часть 3 — целевая матрица
 
