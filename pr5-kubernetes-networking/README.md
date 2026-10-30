@@ -45,7 +45,7 @@ kubectl -n orders exec "$API" -- python -c 'import socket,sys; socket.create_con
 ```
 ![alt text](src/img/image-1.png)
 
-Cilium назначил `api-74bcb7d7f-xfzj6` IP `10.244.1.66` на ноде `minikube`. В pod `eth0` имеет `iflink=18`; на ноде интерфейс 18 — `lxc259d3fa69e98@if17`, парный конец veth.  CNI создаёт сетевое пространство, IP и veth, Cilium проводит межнодовой трафик через `cilium_vxlan`. IP pod меняется при пересоздании, поэтому клиенту нужен Service.
+ CNI создаёт сетевое пространство, IP и veth, Cilium проводит межнодовой трафик через `cilium_vxlan`. IP pod меняется при пересоздании, поэтому клиенту нужен Service.
 
 ## Часть 2 — непрерывность Service при удалении pod
 
@@ -79,7 +79,7 @@ wait
 ![Запросы и удаления pod](src/img/chaos-final.svg)
  IP сменившихся pod есть в [журнале](src/chaos-final.csv), ответы — в [CSV](src/load-final.csv).
 
-CoreDNS разрешает имя Service в ClusterIP, EndpointSlice хранит IP готовых pod, а Service и kube-proxy направляют соединение к endpoint. kube-proxy здесь работает в режиме iptables (mode: iptables), Cilium — с kube-proxy-replacement=false. IPVS обычно заметен при большом числе Service и endpoint, когда обновление длинных цепочек iptables становится дорогим; в этом кластере разница мала. Прямой kubectl delete pod обходит PodDisruptionBudget, поэтому скрипт сам контролирует число готовых API.
+CoreDNS разрешает имя Service в ClusterIP, EndpointSlice хранит IP готовых pod, а Service и kube-proxy направляют соединение к endpoint. kube-proxy здесь работает в режиме iptables (mode: iptables), Cilium — с kube-proxy-replacement=false. IPVS обычно заметен при большом числе Service и endpoint, когда обновление длинных цепочек iptables становится дорогим; в этом кластере разница мала.
 
 ## Часть 3 — целевая матрица
 
@@ -163,13 +163,7 @@ grep -A8 '^# --- networking ---' order-service/orders-chart/values.yaml
 
 pod `client` имеет `role=client`, а селектор `orders-allow-client` и разрешённый источник `orders-allow-api` требуют `role=stranger`. В чарте задано `networkPolicy.clientLabel.role: stranger`. Порты API `8000`, PostgreSQL `5432` и DNS `53` остались правильными. Следовательно, случайная поломка — **подмена метки клиента**: нужный pod не выбирается правилом egress и не подходит под ingress API.
 
-Если pod `client` работает, можно отдельно проверить DNS и TCP до Service. DNS должен разрешить имя, а TCP до API при этой поломке завершится тайм-аутом:
-
-```bash
-kubectl -n orders exec client -- python3 -c 'import socket; print("dns-api", socket.gethostbyname("api.orders.svc.cluster.local")); socket.create_connection(("api.orders.svc.cluster.local", 80), timeout=3); print("tcp-api ok")'
-```
-![alt text](src/img/image-6.png)
-Сейчас `client` находится в фазе `Completed`, поэтому `kubectl exec` в него не работает.
+Запустим под `client`, чтобы можно было отдельно проверить DNS и TCP до Service. DNS должен разрешить имя, а TCP до API при этой поломке завершится тайм-аутом:
 
 ```bash
 kubectl -n orders run client-probe --image=ermii42/orders-api:monitoring --restart=Never --labels=role=client --command -- sleep 300
