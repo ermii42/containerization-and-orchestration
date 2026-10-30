@@ -1,4 +1,7 @@
 # Практика 6 — service mesh и автопилот релиза
+## Ситуация
+
+Service mesh обещает шифрование, надёжность и умное управление трафиком без правок кода. В этой лабе проверяем всё это делом на `api` из чарта `shop`: сначала доказываем, что mesh даёт шифрование и надёжность бесплатно, потом строишь поверх него самоуправляемый канареечный релиз — новая версия получает малую долю трафика, скрипт-гейт сам следит за её здоровьем и автоматически докатывает при успехе или откатывает при росте ошибок, без человека. В конце — честный подсчёт цены: во сколько (задержка, ресурсы) обошлась вся эта магия, и вердикт, нужен ли здесь mesh вообще.
 
 ## Часть 0 — Сервисы и гейт
 
@@ -42,8 +45,7 @@ kubectl -n orders exec deployment/api-v1 -c api -- cat /sys/fs/cgroup/memory.cur
 kubectl -n monitoring port-forward svc/prometheus-kube-prometheus-prometheus 9090:9090 >/tmp/pr6-portforward.log 2>&1 &
 curl -G http://localhost:9090/api/v1/query --data-urlencode 'query=sum(rate(container_cpu_usage_seconds_total{namespace="orders",container="api",pod=~"api-v1.*"}[1m]))' --data-urlencode 'time=1793386830'
 ```
-
-Результат 200 последовательных POST: **200 ответов 201**, p50 **2,95 мс**, p95 **74,34 мс**, среднее **11,01 мс**. После нагрузки память API — **43 565 056 байт (41,55 MiB)**. Prometheus показал **0,01666 CPU core (16,66m)** для минутного окна около 19:00:30 UTC. CPU request/limit — 200m. Данные сохранены в `baseline.json` и `baseline-resource.json`. Нагрузка шла с ВМ на NodePort без прокси.
+![alt text](src/image.png)
 
 ## Часть 3 — mTLS и identity
 
@@ -55,8 +57,9 @@ kubectl -n orders get pods -l 'app in (api,mesh-client)'
 linkerd identity -n orders -l app=api
 kubectl -n orders exec deployment/mesh-client -c client -- curl -s http://localhost:4191/metrics | grep 'tls="true"' | head
 ```
-
-Сертификат API: `Subject: CN=default.orders.serviceaccount.identity.linkerd.cluster.local`, `Issuer: CN=identity.linkerd.`, SAN содержит тот же DNS identity, расширения разрешают TLS server/client authentication. Прокси клиента показал `request_total` к API с `tls="true"` и `server_id="default.orders.serviceaccount.identity.linkerd.cluster.local"` (159 запросов на момент проверки). Это подтверждает шифрование и проверку сервисной identity сертификатом; IP в метрике — адрес доставки, а не удостоверение сервиса.
+![alt text](src/image-1.png)
+![alt text](src/image-2.png)
+Сертификат API: `Subject: CN=default.orders.serviceaccount.identity.linkerd.cluster.local`, `Issuer: CN=identity.linkerd.`, SAN содержит тот же DNS identity, расширения разрешают TLS server/client authentication. Прокси клиента показал `request_total` к API с `tls="true"` и `server_id="default.orders.serviceaccount.identity.linkerd.cluster.local"` . Это подтверждает шифрование и проверку сервисной identity сертификатом; IP в метрике — адрес доставки, а не удостоверение сервиса.
 
 ## Часть 4 — Надёжность через retries
 
@@ -68,7 +71,7 @@ python3 pr6-service-mesh/reliability.py
 helm upgrade --reset-values orders pr6-service-mesh/order-service/orders-chart -n orders --force-conflicts --wait --timeout 180s
 ```
 
-![Ошибки backend и клиента](reliability.svg)
+![Ошибки backend и клиента](src/reliability.svg)
 
 Backend обработал **412 попыток**, из них **112 ответов 500 (27,18%)**. Клиент получил **0 ответов 500 из 300**. Счётчик Linkerd `outbound_http_route_retry_requests_total` вырос на **112**. Значит, сработали повторы запросов. Circuit breaking/outlier detection в этом опыте не настраивались. Данные сохранены в `reliability.json`.
 
@@ -84,7 +87,7 @@ kubectl -n orders exec deployment/mesh-client -c client -- sh -c 'for i in $(seq
 
 При весах 90/10 получено **177 ответов v1 и 23 ответа v2** из 200 (88,5/11,5%).
 
-![Разделение трафика](traffic-split.svg)
+![Разделение трафика](src/traffic-split.svg)
  Взвешенный выбор вероятностный, поэтому малое отклонение ожидаемо.
 
 ## Часть 6 — Автопилот
@@ -102,7 +105,7 @@ Prometheus сканирует API каждые 30 с, поэтому сразу 
 
 **Плохой релиз.** v2 с `FAIL=true` стартовала с 10%. После накопления метрик гейт увидел около 36 запросов за минуту и 100% ошибок v2, затем самостоятельно изменил веса **90/10 → 100/0** за 15 с. Подробные значения — в `bad-release.csv`.
 
-![Автоматический откат](bad-release.svg)
+![Автоматический откат](src/bad-release.svg)
 
 **Хороший релиз.** v2 обновлена с `FAIL=false`, веса возвращены к 90/10 через чарт. После двух ожидающих итераций Prometheus гейт последовательно поднял v2 до **30, 50, 70, 90 и 100%**. На каждом шаге доля ошибок v2 была 0%, p95 приложения — 4,7–8,2 мс. Подробные значения — в `good-release.csv`.
 
@@ -114,11 +117,11 @@ helm upgrade --reset-values orders pr6-service-mesh/order-service/orders-chart -
 kubectl -n orders get httproute api-split -o jsonpath='{.spec.rules[0].backendRefs[*].weight}'
 ```
 
-![Автоматический докат](good-release.svg)
+![Автоматический докат](src/good-release.svg)
 
 Состояние canary и метрики релиза также зафиксированы на скриншоте Grafana:
 
-![Grafana: наблюдение за canary-релизом](grafana-canary.png)
+![Grafana: наблюдение за canary-релизом](src/grafana-canary.png)
 
 ## Часть 8 — Цена mesh и вердикт
 
@@ -149,7 +152,7 @@ curl -G http://localhost:9090/api/v1/query --data-urlencode 'query=rate(containe
 | Память API + proxy | 40,73 MiB | 43,88 MiB | +3,15 MiB (+7,7%) |
 | CPU API + proxy | 23,3m | 34,6m | +11,3m (+48,5%) |
 
-![Сравнение стоимости mesh](mesh-cost.svg)
+![Сравнение стоимости mesh](src/mesh-cost.svg)
 
 В этом прогоне заметен рост медианы, памяти и CPU. Уменьшение p95 и среднего нельзя считать доказанным ускорением: каждый вариант запускался один раз, на задержку влияет состояние узла и БД, а CPU измерен по минутному окну. Путь через NodePort измеряет входящий sidecar API, но не полную стоимость внутреннего mTLS-вызова между двумя прокси. 
 **Вердикт:** для одной небольшой API с БД расход дополнительных 3,15 MiB и около 11m CPU не окупается сам по себе; в рамках этой практики mesh оправдан проверяемыми mTLS, повторами и управляемым canary. Перед применением на большой нагрузке нужны повторные прогоны и отдельный тест внутренних вызовов.
@@ -183,9 +186,5 @@ curl -u "admin:$GRAFANA_PASSWORD" -H "Content-Type: application/json" --data-bin
 helm upgrade --reset-values orders pr6-service-mesh/order-service/orders-chart -n orders --force-conflicts --wait --timeout 180s
 ```
 
-![Дашборд Grafana: ошибки, задержки, трафик и mTLS](grafana-monitoring.png)
+![Дашборд Grafana: ошибки, задержки, трафик и mTLS](src/grafana-monitoring.png)
 
-
-
-# Какие скриншоты нужны:
-подтверждение шифрования; график надёжности при `FLAKY=true`; деление трафика 90/10 по `/version`; автоматический откат плохой v2; автоматический докат здоровой v2; сравнение baseline и с mesh;
