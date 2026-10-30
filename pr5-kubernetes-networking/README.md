@@ -143,31 +143,18 @@ src/scripts/run-matrix.sh
 ## Часть 6 — Скрытая поломка и диагностика
 
 Подготовим 3–4 варианта поломки:
-src/scripts/inject-fault.py случайно выбирает один из четырёх вариантов и меняет values.yaml: порт DNS, PostgreSQL или API либо метку клиента. Затем выполняет helm upgrade, не печатая тип поломки. Ключ `--restore` возвращает значения и обновляет релиз.
+src/scripts/inject-fault.py случайно выбирает один из четырёх вариантов и меняет values.yaml: порт DNS, PostgreSQL или API либо метку клиента. Затем выполняет helm upgrade, не печатая тип поломки.
 
 ```bash
 python3 src/scripts/inject-fault.py
 
-kubectl -n orders exec -i client -- python3 - client < src/scripts/matrix-probe.py
-
-for pod in $(kubectl -n kube-system get pod -l k8s-app=cilium -o name); do
-  kubectl -n kube-system exec "$pod" -c cilium-agent -- hubble observe --last 500 --verdict DROPPED --from-pod orders/client
-done
-
-kubectl -n orders get networkpolicy orders-allow-dns -o yaml
-
-python3 scripts/inject-fault.py --restore
 ```
 
-Симптом: клиент перестал разрешать `api.orders.svc.cluster.local`, так что отправка заказа через Service стала невозможна. [Hubble](scripts/fault-hubble.txt) показал `orders/client -> kube-system/coredns:53`, `EGRESS DENIED (UDP)`. Это указало на DNS до просмотра случайного выбора. Схема по зафиксированному Hubble-потоку:
 
-![Маршрут с отказом DNS](scripts/fault-map.svg)
-
-В установленной `orders-allow-dns` затем обнаружен порт **5353** вместо **53**. После восстановления политика снова разрешила `53 53` (UDP/TCP); DNS lookup и `POST /order` с HTTP 201 прошли, финальная матрица перепроверена.
 
 ## Часть 7 — мониторинг и алерты
 
-Используем `kube-prometheus-stack` Лабы 2. 
+Используем kube-prometheus-stack Лабы 2. 
 В Cilium включены метрики Hubble `dns`, `drop`, `tcp`, `flow` с метками namespace:
 
 ```bash

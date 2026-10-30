@@ -1,1 +1,21 @@
 source,target,actual,detail
+client,api,allow,
+client,worker,deny,TimeoutError: timed out
+client,postgres,deny,TimeoutError: timed out
+client,dns,allow,
+stranger,api,deny,TimeoutError: timed out
+stranger,worker,deny,TimeoutError: timed out
+stranger,postgres,deny,TimeoutError: timed out
+stranger,dns,allow,
+api,api,deny,TimeoutError: timed out
+api,worker,deny,TimeoutError: timed out
+api,postgres,allow,
+api,dns,allow,
+worker,api,deny,TimeoutError: timed out
+worker,worker,deny,TimeoutError: timed out
+worker,postgres,allow,
+worker,dns,allow,
+postgres,api,deny,TimeoutError: timed out
+postgres,worker,deny,TimeoutError: timed out
+postgres,postgres,allow,
+postgres,dns,allow,

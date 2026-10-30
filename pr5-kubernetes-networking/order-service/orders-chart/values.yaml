@@ -90,7 +90,7 @@ worker:
 networkPolicy:
   enabled: true
   clientLabel:
-    role: client
+    role: stranger
   apiPort: 8000
   workerPort: 8001
   postgresPort: 5432

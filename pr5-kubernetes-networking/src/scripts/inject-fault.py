@@ -7,7 +7,7 @@ import secrets
 import subprocess
 import sys
 
-root = Path(__file__).resolve().parents[1]
+root = Path(__file__).resolve().parents[2]
 chart = root / 'order-service/orders-chart'
 values = chart / 'values.yaml'
 backup = Path('/tmp/pr5-orders-values-before-fault.yaml')
