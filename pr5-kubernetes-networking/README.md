@@ -142,15 +142,65 @@ src/scripts/run-matrix.sh
 
 ## Часть 6 — Скрытая поломка и диагностика
 
-Подготовим 3–4 варианта поломки:
-src/scripts/inject-fault.py случайно выбирает один из четырёх вариантов и меняет values.yaml: порт DNS, PostgreSQL или API либо метку клиента. Затем выполняет helm upgrade, не печатая тип поломки.
+`src/scripts/inject-fault.py` уже запущен: он случайно меняет в `order-service/orders-chart/values.yaml` порт DNS, PostgreSQL или API либо метку клиента и обновляет Helm-релиз. Повторно запускать его при активной поломке не требуется. Ниже — диагностика текущего состояния; команды починки приведены отдельно и **не выполнялись**.
+
+### Диагностика: отдельные команды
+
+Все команды выполняются из каталога `pr5-kubernetes-networking`. Сначала проверяем pod клиента и текущие значения сетевых политик:
 
 ```bash
-python3 src/scripts/inject-fault.py
-
+kubectl -n orders get pod client --show-labels
+kubectl -n orders get networkpolicy orders-allow-client -o jsonpath='{.spec.podSelector.matchLabels.role}{" "}{.spec.egress[0].ports[0].port}{"\n"}'
+kubectl -n orders get networkpolicy orders-allow-api -o jsonpath='{.spec.ingress[0].from[0].podSelector.matchLabels.role}{"\n"}'
+grep -A8 '^# --- networking ---' order-service/orders-chart/values.yaml
 ```
 
+Фактический результат: pod `client` имеет `role=client`, а селектор `orders-allow-client` и разрешённый источник `orders-allow-api` требуют `role=stranger`. В чарте задано `networkPolicy.clientLabel.role: stranger`. Порты API `8000`, PostgreSQL `5432` и DNS `53` остались правильными. Следовательно, случайная поломка — **подмена метки клиента**: нужный pod не выбирается правилом egress и не подходит под ingress API.
 
+Если pod `client` работает, можно отдельно проверить DNS и TCP до Service. DNS должен разрешить имя, а TCP до API при этой поломке завершится тайм-аутом:
+
+```bash
+kubectl -n orders exec client -- python3 -c 'import socket; print("dns-api", socket.gethostbyname("api.orders.svc.cluster.local")); socket.create_connection(("api.orders.svc.cluster.local", 80), timeout=3); print("tcp-api ok")'
+```
+
+Сейчас `client` находится в фазе `Completed`, поэтому `kubectl exec` в него не работает. Для повторения пробы создайте временный pod с той же меткой; это только диагностическая проба, она не меняет политику:
+
+```bash
+kubectl -n orders run client-probe --image=ermii42/orders-api:monitoring --restart=Never --labels=role=client --command -- sleep 300
+kubectl -n orders wait --for=condition=Ready pod/client-probe --timeout=90s
+kubectl -n orders exec client-probe -- python3 -c 'import socket; print("dns-api", socket.gethostbyname("api.orders.svc.cluster.local")); socket.create_connection(("api.orders.svc.cluster.local", 80), timeout=3); print("tcp-api ok")'
+```
+
+Отклонённый SYN можно найти в Hubble на ноде пробного pod. После просмотра удалите только пробный pod:
+
+```bash
+CLIENT_NODE=$(kubectl -n orders get pod client-probe -o jsonpath='{.spec.nodeName}')
+CILIUM=$(kubectl -n kube-system get pod -l k8s-app=cilium --field-selector spec.nodeName="$CLIENT_NODE" -o jsonpath='{.items[0].metadata.name}')
+kubectl -n kube-system exec "$CILIUM" -c cilium-agent -- hubble observe --last 500 --verdict DROPPED --from-pod orders/client-probe | grep 'api-.*:8000'
+kubectl -n orders delete pod client-probe --wait=true
+```
+
+Ожидаемый признак — `EGRESS DENIED (TCP Flags: SYN)` или `Policy denied DROPPED` для потока `orders/client-probe → orders/api:8000`. Он подтверждает блокировку политикой, а не ошибку DNS.
+
+### Команды для починки — не выполнялись
+
+Скрипт хранит исходный `values.yaml` в `/tmp/pr5-orders-values-before-fault.yaml`. Его режим `--restore` возвращает исходные значения и выполняет `helm upgrade`. Выполнять следующую команду следует только когда потребуется снять поломку:
+
+```bash
+python3 src/scripts/inject-fault.py --restore
+```
+
+После восстановления проверьте метки правил, а затем TCP-доступность API из pod с `role=client`:
+
+```bash
+kubectl -n orders get networkpolicy orders-allow-client -o jsonpath='{.spec.podSelector.matchLabels.role}{"\n"}'
+kubectl -n orders get networkpolicy orders-allow-api -o jsonpath='{.spec.ingress[0].from[0].podSelector.matchLabels.role}{"\n"}'
+# Оба значения должны быть client.
+kubectl -n orders run client-probe --image=ermii42/orders-api:monitoring --restart=Never --labels=role=client --command -- sleep 300
+kubectl -n orders wait --for=condition=Ready pod/client-probe --timeout=90s
+kubectl -n orders exec client-probe -- python3 -c 'import socket; socket.create_connection(("api.orders.svc.cluster.local", 80), timeout=3); print("tcp-api ok")'
+kubectl -n orders delete pod client-probe --wait=true
+```
 
 ## Часть 7 — мониторинг и алерты
 
