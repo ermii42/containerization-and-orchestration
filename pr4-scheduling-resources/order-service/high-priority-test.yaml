@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: high-priority-test
+  namespace: orders
+  labels:
+    app: high-priority-test
+spec:
+  priorityClassName: orders-critical
+  containers:
+    - name: pause
+      image: registry.k8s.io/pause:3.9
+      resources:
+        requests:
+          cpu: "500m"       # запросите столько, сколько на узле нет
+          memory: "256Mi"

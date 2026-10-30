@@ -1,0 +1,43 @@
+{{- if .Values.monitoring.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "orders.fullname" . }}-alerts
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "orders.labels" . | nindent 4 }}
+    release: prometheus
+spec:
+  groups:
+    - name: orders.sla.rules
+      rules:
+        - alert: OrdersApiUnavailable
+          expr: (sum(up{namespace="{{ .Values.namespace }}",service="api"}) or vector(0)) < 1
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Orders API has no scrapeable instances"
+            description: "No API instance has been reachable by Prometheus for one minute."
+        - alert: OrdersApiHighErrorRate
+          expr: |
+            sum(rate(http_requests_total{namespace="{{ .Values.namespace }}",job="api",path="/order",status=~"5.."}[2m]))
+            / clamp_min(sum(rate(http_requests_total{namespace="{{ .Values.namespace }}",job="api",path="/order"}[2m])), 0.001) > 0.05
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "More than 5% of order requests return 5xx"
+            description: "The order creation error ratio exceeded 5% for two minutes."
+        - alert: OrdersBatchDegraded
+          expr: |
+            kube_deployment_status_replicas_available{namespace="{{ .Values.namespace }}",deployment="batch"}
+            < on(namespace,deployment)
+            kube_deployment_spec_replicas{namespace="{{ .Values.namespace }}",deployment="batch"}
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Batch capacity is degraded"
+            description: "Available batch replicas remain below the desired count for one minute."
+{{- end }}

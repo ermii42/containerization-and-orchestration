@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: batch
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "orders.labels" . | nindent 4 }}
+    app: batch
+spec:
+  type: ClusterIP
+  selector:
+    app: batch
+    app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
+  ports:
+    - name: http
+      port: {{ .Values.batch.port }}
+      targetPort: http
