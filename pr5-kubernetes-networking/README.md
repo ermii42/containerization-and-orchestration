@@ -11,14 +11,7 @@
 Выбран **Cilium 1.20.1**: он применяет NetworkPolicy, а Hubble показывает направление, порт и причину блокировки. Это позволит найти скрытую поломку и собрать метрики сети. Calico тоже поддерживает политики, но Hubble удобнее для требуемой диагностики.
 
 ```bash
-helm get values prometheus -n monitoring -a > /tmp/pr5-prometheus-values.yaml
-helm get values cnpg -n cnpg-system -a > /tmp/pr5-cnpg-values.yaml
-minikube delete
 minikube start --driver=docker --container-runtime=containerd --cni=cilium --nodes=2 --memory=4096 --cpus=2
-kubectl wait --for=condition=Ready node --all --timeout=180s
-helm upgrade --install cnpg cnpg/cloudnative-pg --version 0.29.1 -n cnpg-system --create-namespace -f /tmp/pr5-cnpg-values.yaml
-helm upgrade --install prometheus prometheus-community/kube-prometheus-stack --version 92.13.1 -n monitoring --create-namespace -f /tmp/pr5-prometheus-values.yaml
-kubectl -n kube-system get daemonset cilium
 ```
 
 ## Часть 1 — приложение и сеть pod
@@ -67,20 +60,20 @@ NodePort открывает порт на нодах; LoadBalancer дополн�
 
 Запустим скрипт, который в фоне раз в несколько секунд убивает случайный под api или worker — непрерывный хаос. Параллельно прогоним постоянную нагрузку клиента на сервис по имени через DNS:
 
-Нагрузка **из pod `load-client` по DNS** `api.orders.svc.cluster.local` раз в 0,5 секунды, 60 секунд. Одновременно `scripts/chaos-pods.sh` каждые 8 секунд удалял случайный готовый pod `api` или `worker`. API удалялся только при наличии трёх готовых реплик. Первый пробный вариант выбирал любой `Running` pod и опустошал готовые endpoint; первый прогон с Cilium и порогом в две готовые реплики дал один отказ в момент удаления. После усиления порога до трёх реплик финальный прогон **в Cilium-кластере** дал **119 ответов HTTP 200, 0 ошибок, 8 удалений pod**.
-
-```bash
+Нагрузка из pod client по DNS api.orders.svc.cluster.local раз в 0,5 секунды, 60 секунд. 
+```
 kubectl -n orders run client --image=ermii42/orders-api:monitoring --restart=Never --labels=role=client --command -- sleep 3600
 
 kubectl -n orders wait --for=condition=Ready pod/client --timeout=90s
-
-kubectl -n orders exec -i client -- python -u - http://api.orders.svc.cluster.local/orders 60 < scripts/load-client.py > scripts/load-final.csv &
-scripts/chaos-pods.sh orders 60 8 scripts/chaos-final.csv &
+```
+Запускаем внутри пода client python-скрипт load-client.py
+```
+kubectl -n orders exec -i client -- python -u - http://api.orders.svc.cluster.local/orders 60 < src/scripts/load-client.py > src/load-final.csv &
+```
+Одновременно `scripts/chaos-pods.sh` каждые 8 секунд удалял случайный готовый pod `api` или `worker`.
+```
+src/scripts/chaos-pods.sh orders 60 8 src/chaos-final.csv &
 wait
-python3 scripts/plot-chaos.py
-python3 scripts/visualize-evidence.py
-awk -F, 'NR>1{n++; if($2!=200)bad++} END{print n,bad+0}' scripts/load-final.csv
-kubectl -n kube-system get cm kube-proxy -o yaml | grep -A5 'mode:'
 ```
 
 ![Запросы и удаления pod](src/img/chaos-final.svg)
@@ -90,7 +83,8 @@ CoreDNS разрешает имя Service в ClusterIP, EndpointSlice храни
 
 ## Часть 3 — целевая матрица
 
-Для рабочего соединения нужны исходящее разрешение источника и входящее разрешение назначения. `client` имеет метку `role=client`, `stranger` — посторонний pod. Мониторинг `/metrics`, DNS на UDP/TCP 53 и PostgreSQL → Kubernetes API на TCP/8443 — служебные исключения.
+Спроектируем целевую матрицу:
+Для рабочего соединения нужны исходящее разрешение источника и входящее разрешение назначения. client имеет метку role=client, stranger — посторонний pod. Мониторинг /metrics, DNS на UDP/TCP 53 и PostgreSQL -> Kubernetes API на TCP/8443 — служебные исключения.
 
 | Источник | API | worker | PostgreSQL | DNS |
 |---|---|---|---|---|
@@ -100,64 +94,72 @@ CoreDNS разрешает имя Service в ClusterIP, EndpointSlice храни
 | `worker` | нет | нет, кроме самого себя | да, TCP/5432 | да |
 | PostgreSQL | нет | нет | собственный pod: да | да |
 
-NodePort отдельно разрешён внешнему клиенту; Prometheus из namespace `monitoring` имеет доступ к метрикам API и worker.
+NodePort отдельно разрешён внешнему клиенту; Prometheus из namespace monitoring имеет доступ к метрикам API и worker.
 
-## Часть 4 — политики в Helm-чарте
+## Часть 4 — Политики в Helm-чарте
+Реализуем матрицу как шаблоны NetworkPolicy в чарте , значения (какие лейблы, какие порты разрешены) — через values.yaml:
 
-`templates/networkpolicy.yaml` задаёт полный default deny для namespace `orders`, затем точечные разрешения по меткам и портам: `client → api`, `api/worker → postgres`, мониторинг и DNS. Параметры находятся в `values.yaml`. `templates/cilium-exceptions.yaml` добавляет точечные правила для внешнего NodePort и `postgres → kube-apiserver:8443`: host entity Cilium нельзя надёжно выразить через Kubernetes `ipBlock`.
+templates/networkpolicy.yaml задаёт полный default deny для namespace orders, затем точечные разрешения по меткам и портам: client -> api, api/worker -> postgres, мониторинг и DNS. Параметры находятся в values.yaml. templates/cilium-exceptions.yaml добавляет точечные правила для внешнего NodePort и postgres -> kube-apiserver:8443
 
 ```bash
-helm lint ./order-service/orders-chart
-helm template orders ./order-service/orders-chart -n orders
 helm upgrade orders ./order-service/orders-chart -n orders --reset-values
+
 kubectl -n orders get networkpolicy,ciliumnetworkpolicy
+
 curl -sS -o /dev/null -w '%{http_code}\n' http://192.168.49.2:30080/health
 ```
+![alt text](image-3.png)
 
-Установлены шесть NetworkPolicy и две CiliumNetworkPolicy; обе Cilium-политики `VALID=True`. NodePort вернул 200. Hubble показывает `FORWARDED` для PostgreSQL → `192.168.49.2:8443`.
+Установлены шесть NetworkPolicy и две CiliumNetworkPolicy; обе Cilium-политики `VALID=True`. NodePort вернул 200. Hubble показывает `FORWARDED` для PostgreSQL -> `192.168.49.2:8443`.
 
-## Часть 5 — проверка матрицы
+## Часть 5 — Проверка матрицы на практике
 
-Созданы pod `client` (`role=client`) и `stranger` (`role=stranger`) на образе с Python. `scripts/matrix-probe.py` открывает TCP-соединения и делает DNS lookup. Для `api → api` и `worker → worker` выбран IP **другого** pod: соединение pod с самим собой идёт локально и не изолируется NetworkPolicy. Полный результат — [matrix.csv](scripts/matrix.csv).
-
-![Зелёная матрица доступа](scripts/matrix.svg)
+Создадим pod client и stranger на образе с Python. src/scripts/matrix-probe.py открывает TCP-соединения и делает DNS lookup. Для api -> api и worker -> worker выбран IP другого pod: соединение pod с самим собой идёт локально и не изолируется NetworkPolicy. 
 
 ```bash
 kubectl -n orders run client --image=ermii42/orders-api:monitoring --restart=Never --labels=role=client --command -- sleep 3600
 kubectl -n orders run stranger --image=ermii42/orders-api:monitoring --restart=Never --labels=role=stranger --command -- sleep 3600
-scripts/run-matrix.sh
+src/scripts/run-matrix.sh
 ```
+Полный результат — [matrix.csv](src/matrix.csv).
+
+![Зелёная матрица доступа](src/img/matrix.svg)
 
 | Проверка | Ожидаемо | Фактически |
 |---|---|---|
-| `client → api` | доступ | доступ |
-| `client → worker/postgres` | запрет | запрет |
-| `stranger → api/worker/postgres` | запрет | запрет |
-| `api → другой api/worker` | запрет | запрет |
-| `api → postgres` | доступ | доступ |
-| `worker → api/другой worker` | запрет | запрет |
-| `worker → postgres` | доступ | доступ |
-| `postgres → api/worker` | запрет | запрет |
-| `postgres → собственный pod` | доступ | доступ |
+| `client -> api` | доступ | доступ |
+| `client -> worker/postgres` | запрет | запрет |
+| `stranger -> api/worker/postgres` | запрет | запрет |
+| `api -> другой api/worker` | запрет | запрет |
+| `api -> postgres` | доступ | доступ |
+| `worker -> api/другой worker` | запрет | запрет |
+| `worker -> postgres` | доступ | доступ |
+| `postgres -> api/worker` | запрет | запрет |
+| `postgres -> собственный pod` | доступ | доступ |
 | DNS из всех пяти типов pod | доступ | доступ |
 
 Клиент создал заказ: `POST /order` через Service вернул HTTP 201. Запрещённые пробы получили тайм-аут, а Hubble — `Policy denied DROPPED`.
 
-## Часть 6 — скрытая поломка и диагностика
+## Часть 6 — Скрытая поломка и диагностика
 
-`scripts/inject-fault.py` случайно выбирает один из четырёх вариантов и меняет `values.yaml`: порт DNS, PostgreSQL или API либо метку клиента. Затем выполняет `helm upgrade`, не печатая тип поломки. Ключ `--restore` возвращает значения и обновляет релиз.
+Подготовим 3–4 варианта поломки:
+src/scripts/inject-fault.py случайно выбирает один из четырёх вариантов и меняет values.yaml: порт DNS, PostgreSQL или API либо метку клиента. Затем выполняет helm upgrade, не печатая тип поломки. Ключ `--restore` возвращает значения и обновляет релиз.
 
 ```bash
-python3 scripts/inject-fault.py
-kubectl -n orders exec -i client -- python3 - client < scripts/matrix-probe.py
+python3 src/scripts/inject-fault.py
+
+kubectl -n orders exec -i client -- python3 - client < src/scripts/matrix-probe.py
+
 for pod in $(kubectl -n kube-system get pod -l k8s-app=cilium -o name); do
   kubectl -n kube-system exec "$pod" -c cilium-agent -- hubble observe --last 500 --verdict DROPPED --from-pod orders/client
 done
+
 kubectl -n orders get networkpolicy orders-allow-dns -o yaml
+
 python3 scripts/inject-fault.py --restore
 ```
 
-Симптом: клиент перестал разрешать `api.orders.svc.cluster.local`, так что отправка заказа через Service стала невозможна. [Hubble](scripts/fault-hubble.txt) показал `orders/client → kube-system/coredns:53`, `EGRESS DENIED (UDP)`. Это указало на DNS до просмотра случайного выбора. Схема по зафиксированному Hubble-потоку:
+Симптом: клиент перестал разрешать `api.orders.svc.cluster.local`, так что отправка заказа через Service стала невозможна. [Hubble](scripts/fault-hubble.txt) показал `orders/client -> kube-system/coredns:53`, `EGRESS DENIED (UDP)`. Это указало на DNS до просмотра случайного выбора. Схема по зафиксированному Hubble-потоку:
 
 ![Маршрут с отказом DNS](scripts/fault-map.svg)
 
