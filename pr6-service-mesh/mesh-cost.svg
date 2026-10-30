@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="720" viewBox="0 0 1100 720">
+<rect width="1100" height="720" fill="#fff"/>
+<style>text{font-family:Arial,sans-serif;fill:#1d2733} .title{font-size:28px;font-weight:700} .subtitle{font-size:16px;fill:#536372} .name{font-size:18px;font-weight:700} .value{font-size:16px} .delta{font-size:15px;fill:#536372}</style>
+<text x="55" y="52" class="title">Cost of Linkerd sidecar</text>
+<text x="55" y="82" class="subtitle">API v1 · 1000 sequential POST /order · same NodePort</text>
+<rect x="750" y="39" width="16" height="16" rx="3" fill="#377eb8"/><text x="776" y="53" class="value">No mesh</text>
+<rect x="900" y="39" width="16" height="16" rx="3" fill="#e6863b"/><text x="926" y="53" class="value">With mesh</text>
+<text x="55" y="122" class="name">p50 latency</text>
+<text x="550" y="122" class="delta">Change +21.7%</text>
+<rect x="55" y="140" width="506.4" height="35" rx="5" fill="#377eb8"/>
+<rect x="55" y="181" width="616.1" height="35" rx="5" fill="#e6863b"/>
+<text x="576.4" y="165" class="value">3.00 ms</text>
+<text x="686.1" y="206" class="value">3.65 ms</text>
+<text x="55" y="267" class="name">p95 latency</text>
+<text x="550" y="267" class="delta">Change -16.9%</text>
+<rect x="55" y="285" width="616.1" height="35" rx="5" fill="#377eb8"/>
+<rect x="55" y="326" width="512.0" height="35" rx="5" fill="#e6863b"/>
+<text x="686.1" y="310" class="value">73.19 ms</text>
+<text x="582.0" y="351" class="value">60.83 ms</text>
+<text x="55" y="412" class="name">Memory: API + proxy</text>
+<text x="550" y="412" class="delta">Change +7.7%</text>
+<rect x="55" y="430" width="571.9" height="35" rx="5" fill="#377eb8"/>
+<rect x="55" y="471" width="616.1" height="35" rx="5" fill="#e6863b"/>
+<text x="641.9" y="455" class="value">40.73 MiB</text>
+<text x="686.1" y="496" class="value">43.88 MiB</text>
+<text x="55" y="557" class="name">CPU: API + proxy</text>
+<text x="550" y="557" class="delta">Change +48.5%</text>
+<rect x="55" y="575" width="414.9" height="35" rx="5" fill="#377eb8"/>
+<rect x="55" y="616" width="616.1" height="35" rx="5" fill="#e6863b"/>
+<text x="484.9" y="600" class="value">23.3 m</text>
+<text x="686.1" y="641" class="value">34.6 m</text>
+<text x="55" y="700" class="subtitle">One run per state; CPU is a one-minute Prometheus rate at benchmark end.</text>
+</svg>

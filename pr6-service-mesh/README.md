@@ -1,7 +1,5 @@
 # Практика 6 — service mesh и автопилот релиза
 
-
-
 ## Часть 0 — Сервисы и гейт
 
 В `order-service/app/api/app.py` добавлены `GET /version`, переменные `VERSION`, `FAIL`, `FLAKY`. v1 при `FLAKY=true` случайно возвращает 500 на 30% вызовов `POST /order` до записи в БД; v2 при `FAIL=true` возвращает 500 на каждом вызове. `GET /health`, `GET /orders`, `POST /order` сохранены. Метрики запросов и задержки содержат label `version`. Оба варианта используют один образ с разным окружением. Ошибка вводится до изменения состояния БД, поэтому повтор POST в этом опыте не создаёт дубль; в обычном приложении нужен идемпотентный ключ.
@@ -18,7 +16,7 @@ minikube image build --node minikube-m02 -t orders-api:pr6 pr6-service-mesh/orde
 
 ## Часть 1 — Выбор mesh
 
-Выбран **Linkerd edge-26.10.2**: для задачи нужны mTLS, наблюдаемые повторы и взвешенный HTTPRoute; прокси внедряется только в API и тестовый клиент. Linkerd поддерживает [mTLS](https://linkerd.io/docs/features/automatic-mtls/), [retry-аннотации](https://linkerd.io/docs/reference/retries/) и [HTTPRoute](https://linkerd.io/docs/reference/httproute/). Установлены совместимые Gateway API CRD v1.2.1.
+Выбран **Linkerd edge-26.10.2**: для задачи нужны mTLS, наблюдаемые повторы и взвешенный HTTPRoute; прокси внедряется только в API и тестовый клиент. Linkerd поддерживает mTLS, retry-аннотации и HTTPRoute. Установлены совместимые Gateway API CRD v1.2.1.
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSfL https://run.linkerd.io/install-edge | sh
@@ -118,27 +116,76 @@ kubectl -n orders get httproute api-split -o jsonpath='{.spec.rules[0].backendRe
 
 ![Автоматический докат](good-release.svg)
 
-## Часть 8 — Посчитай цену и вынеси вердикт
+Состояние canary и метрики релиза также зафиксированы на скриншоте Grafana:
 
-Повтори замер задержки и потребления `api` — теперь с mesh — и сравни с baseline из Части 2. Посчитай, насколько выросли latency и ресурсы из-за прокси, и вынеси вердикт: оправдан ли mesh для системы такого размера. Ответ — на цифрах.
+![Grafana: наблюдение за canary-релизом](grafana-canary.png)
+
+## Часть 8 — Цена mesh и вердикт
+
+Для сравнения выполнены два новых прогона по **1000 последовательных `POST /order`** на одном NodePort `192.168.49.2:30080`. В обоих случаях работала только v1, `FAIL=false`, `FLAKY=false`; внешний клиент не был включён в mesh. Между прогонами менялось только внедрение Linkerd sidecar в API. Так сравнение точнее исходного baseline из части 2 (там было 200 запросов). Результаты сохранены в `ab-baseline.json`, `ab-mesh.json` и `ab-resources.json`.
+
+```bash
+helm upgrade --reset-values orders pr6-service-mesh/order-service/orders-chart -n orders --force-conflicts --set mesh.enabled=false --set mesh.clientEnabled=false --set api.v2.enabled=false --wait --timeout 180s
+python3 pr6-service-mesh/bench.py http://192.168.49.2:30080 1000 | tee pr6-service-mesh/ab-baseline.json
+helm upgrade --reset-values orders pr6-service-mesh/order-service/orders-chart -n orders --force-conflicts --set mesh.enabled=true --set mesh.clientEnabled=false --set api.v2.enabled=false --wait --timeout 180s
+python3 pr6-service-mesh/bench.py http://192.168.49.2:30080 1000 | tee pr6-service-mesh/ab-mesh.json
+python3 pr6-service-mesh/plot_cost.py
+```
+
+После каждого прогона снимались `container_memory_usage_bytes` и минутная скорость `container_cpu_usage_seconds_total` для контейнеров `api` и `linkerd-proxy` соответствующего pod. Пример запросов к Prometheus (имя pod подставляется из `kubectl get pods`):
+
+```bash
+kubectl -n orders get pods -l app=api,version=v1
+curl -G http://localhost:9090/api/v1/query --data-urlencode 'query=container_memory_usage_bytes{namespace="orders",pod="<POD>",container=~"api|linkerd-proxy"}'
+curl -G http://localhost:9090/api/v1/query --data-urlencode 'query=rate(container_cpu_usage_seconds_total{namespace="orders",pod="<POD>",container=~"api|linkerd-proxy"}[1m])'
+```
+
+| Показатель | Без mesh | С mesh | Разница |
+| --- | ---: | ---: | ---: |
+| Успешные ответы | 1000/1000 | 1000/1000 | 0 |
+| p50 задержки | 3,00 мс | 3,65 мс | +0,65 мс (+21,7%) |
+| p95 задержки | 73,19 мс | 60,83 мс | −12,36 мс (−16,9%) |
+| Средняя задержка | 10,72 мс | 9,37 мс | −1,35 мс (−12,6%) |
+| Память API + proxy | 40,73 MiB | 43,88 MiB | +3,15 MiB (+7,7%) |
+| CPU API + proxy | 23,3m | 34,6m | +11,3m (+48,5%) |
+
+![Сравнение стоимости mesh](mesh-cost.svg)
+
+В этом прогоне заметен рост медианы, памяти и CPU. Уменьшение p95 и среднего нельзя считать доказанным ускорением: каждый вариант запускался один раз, на задержку влияет состояние узла и БД, а CPU измерен по минутному окну. Путь через NodePort измеряет входящий sidecar API, но не полную стоимость внутреннего mTLS-вызова между двумя прокси. 
+**Вердикт:** для одной небольшой API с БД расход дополнительных 3,15 MiB и около 11m CPU не окупается сам по себе; в рамках этой практики mesh оправдан проверяемыми mTLS, повторами и управляемым canary. Перед применением на большой нагрузке нужны повторные прогоны и отдельный тест внутренних вызовов.
 
 ## Часть 9 — Мониторинг
 
-Добавь в чарт шаблоны `ServiceMonitor`/`PrometheusRule`, используя стек из Лабы 2. Mesh сам отдаёт богатые метрики трафика — используй их для дашборда (доля ошибок и задержка по версиям, разделение трафика). Заложи 3 алерта, обоснуй каждый в README.
+В чарт добавлены отдельные сервисы порта `4191` для прокси `api-v1`, `api-v2`, `mesh-client` и `ServiceMonitor` для них. Существующие `ServiceMonitor` API и worker сохранены; API monitor выбирает только сервисы версий, чтобы метрики v1 не собирались повторно через общий сервис `api`. `PrometheusRule` с тремя правилами находится в `templates/prometheusrule.yaml`. Prometheus увидел все три proxy target со статусом `up=1` и загрузил все три правила.
 
-## Результат
+```bash
+helm upgrade --reset-values orders pr6-service-mesh/order-service/orders-chart -n orders --force-conflicts --wait --timeout 180s
+kubectl -n orders get servicemonitor,prometheusrule
+kubectl -n orders get svc api-v1-proxy api-v2-proxy mesh-client-proxy
+curl -G http://localhost:9090/api/v1/query --data-urlencode 'query=up{namespace="orders",service=~".*-proxy"}'
+curl -s 'http://localhost:9090/api/v1/rules?type=alert'
+```
 
-- зафиксирован baseline (задержка, ресурсы) до mesh;
-- mTLS включён, шифрование и identity подтверждены криптографически;
-- доказано графиком: backend реально фейлит часть запросов, а клиент почти не видит ошибок — retries/circuit breaking mesh работают без единой правки кода `api`;
-- трафик реально делится 90/10 между v1 и v2, подтверждено по `/version`;
-- автопилот сам откатывает плохой релиз и сам докатывает хороший до 100% — оба сценария подтверждены графиками;
-- цена mesh посчитана в цифрах против baseline, вынесен обоснованный вердикт;
-- дашборд и 3 алерта поверх стека Лабы 2, встроенные в чарт.
+Правила:
 
-## Что сдать
+1. **`OrdersCanaryHighErrorRate`** — доля HTTP 5xx у `POST /order` v2 выше 5% в течение минуты при нагрузке более 0,1 запроса/с. Порог совпадает с гейтом из части 6 и сигнализирует о плохом canary после развёртывания.
+2. **`OrdersCanaryHighLatency`** — p95 `POST /order` v2 выше 500 мс в течение пяти минут при той же минимальной нагрузке. Порог совпадает с гейтом; длительное окно уменьшает шум от разовых медленных запросов.
+3. **`OrdersMeshUnencryptedTraffic`** — за пять минут появился хотя бы один исходящий запрос `mesh-client` к `api-v1` или `api-v2` без `tls="true"`. Это сигнал о потере ожидаемого mTLS или инжекции прокси. Правило относится к meshed-клиенту, поскольку внешний NodePort-клиент в mesh не входит.
 
-- Код `api` (v1/v2) и скрипта-гейта с Dockerfile (реализация любая, на оценку не влияет; оценивается логика гейта, описанная словами).
-- Обновлённый Helm-чарт `shop`: версии `api`, объект traffic split, mesh-аннотации, `ServiceMonitor`/`PrometheusRule`, финальный `values.yaml`.
-- `README.md`: выбор mesh и почему (Часть 1); baseline (Часть 2); доказательство mTLS (Часть 3); доказательство retries/circuit breaking и какой механизм сработал (Часть 4); деление трафика (Часть 5); логика гейта (Часть 6); результаты обоих сценариев с графиками (Часть 7); цена mesh и вердикт (Часть 8); 3 алерта и обоснование (Часть 9).
-- Скриншоты: подтверждение шифрования; график надёжности при `FLAKY=true`; деление трафика 90/10 по `/version`; автоматический откат плохой v2; автоматический докат здоровой v2; сравнение baseline и с mesh; дашборд.
+Дашборд `grafana-monitoring-dashboard.json` импортирован в Grafana как **Practice 6 / Service mesh monitoring** (`pr6-mesh-monitoring`). Он показывает долю ошибок и p95 по версиям из метрик приложения, фактическое разделение v1/v2 и долю mTLS из [метрик прокси Linkerd](https://linkerd.io/docs/reference/proxy-metrics/index.html). Для снимка на время включались 90/10 и генератор запросов; на дашборде видны примерно 92/8 и 100% mTLS. После снимка штатные значения чарта возвращены: v2 = 100%, генератор выключен.
+
+```bash
+helm upgrade --reset-values orders pr6-service-mesh/order-service/orders-chart -n orders --force-conflicts --wait --timeout 180s --set api.v2.weight=10 --set mesh.loadEnabled=true
+kubectl -n monitoring port-forward svc/prometheus-grafana 3000:80 >/tmp/pr6-grafana.log 2>&1 &
+GRAFANA_PASSWORD=$(kubectl -n monitoring get secret prometheus-grafana -o jsonpath='{.data.admin-password}' | base64 -d)
+curl -u "admin:$GRAFANA_PASSWORD" -H "Content-Type: application/json" --data-binary @pr6-service-mesh/grafana-monitoring-dashboard.json http://localhost:3000/api/dashboards/db
+# Снимок открытого дашборда сохранён как grafana-monitoring.png.
+helm upgrade --reset-values orders pr6-service-mesh/order-service/orders-chart -n orders --force-conflicts --wait --timeout 180s
+```
+
+![Дашборд Grafana: ошибки, задержки, трафик и mTLS](grafana-monitoring.png)
+
+
+
+# Какие скриншоты нужны:
+подтверждение шифрования; график надёжности при `FLAKY=true`; деление трафика 90/10 по `/version`; автоматический откат плохой v2; автоматический докат здоровой v2; сравнение baseline и с mesh;
