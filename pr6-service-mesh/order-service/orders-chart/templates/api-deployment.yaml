@@ -1,0 +1,71 @@
+{{- $root := . }}
+{{- range $version := list "v1" "v2" }}
+{{- if or (eq $version "v1") $root.Values.api.v2.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-{{ $version }}
+  namespace: {{ $root.Values.namespace }}
+  labels:
+    {{- include "orders.labels" $root | nindent 4 }}
+    app: api
+    version: {{ $version }}
+spec:
+  replicas: {{ if eq $version "v1" }}{{ $root.Values.api.replicas }}{{ else }}{{ $root.Values.api.v2.replicas }}{{ end }}
+  selector:
+    matchLabels:
+      app: api
+      version: {{ $version }}
+  template:
+    metadata:
+      labels:
+        app: api
+        version: {{ $version }}
+        {{- toYaml $root.Values.commonLabels | nindent 8 }}
+      annotations:
+        linkerd.io/inject: {{ ternary "enabled" "disabled" $root.Values.mesh.enabled | quote }}
+    spec:
+      priorityClassName: {{ $root.Values.api.priorityClassName }}
+      containers:
+        - name: api
+          image: {{ $root.Values.api.image }}
+          imagePullPolicy: {{ $root.Values.api.pullPolicy }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: orders-postgres-app
+                  key: uri
+            - name: VERSION
+              value: {{ $version | quote }}
+            - name: FAIL
+              value: {{ if eq $version "v2" }}{{ $root.Values.api.v2.fail | quote }}{{ else }}"false"{{ end }}
+            - name: FLAKY
+              value: {{ if eq $version "v1" }}{{ $root.Values.api.flaky | quote }}{{ else }}"false"{{ end }}
+            - name: HEALTH_FAIL
+              value: {{ $root.Values.api.healthFail | quote }}
+          ports:
+            - name: http
+              containerPort: {{ $root.Values.api.port }}
+          resources:
+            {{- toYaml $root.Values.api.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 10
+---
+{{- end }}
+{{- end }}

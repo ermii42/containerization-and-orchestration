@@ -1,0 +1,41 @@
+{{- if and .Values.monitoring.enabled .Values.mesh.enabled }}
+{{- $root := . }}
+{{- range $version := list "v1" "v2" }}
+{{- if or (eq $version "v1") $root.Values.api.v2.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-{{ $version }}-proxy
+  namespace: {{ $root.Values.namespace }}
+  labels:
+    monitoring: linkerd-proxy
+    version: {{ $version }}
+spec:
+  selector:
+    app: api
+    version: {{ $version }}
+  ports:
+    - name: proxy-metrics
+      port: 4191
+      targetPort: 4191
+---
+{{- end }}
+{{- end }}
+{{- if .Values.mesh.clientEnabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: mesh-client-proxy
+  namespace: {{ .Values.namespace }}
+  labels:
+    monitoring: linkerd-proxy
+    version: client
+spec:
+  selector:
+    app: mesh-client
+  ports:
+    - name: proxy-metrics
+      port: 4191
+      targetPort: 4191
+{{- end }}
+{{- end }}

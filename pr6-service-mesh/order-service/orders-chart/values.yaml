@@ -1,0 +1,102 @@
+namespace: orders
+
+commonLabels:
+  app.kubernetes.io/name: orders
+  app.kubernetes.io/part-of: orders
+  app.kubernetes.io/managed-by: helm
+
+# --- scheduling ---
+# strategy: podAntiAffinity | topologySpread
+scheduling:
+  strategy: topologySpread
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+
+# --- PriorityClass ---
+priorityClasses:
+  critical:
+    name: orders-critical
+    value: 1000000
+    description: "Critical revenue-path services (api, postgres)"
+  batch:
+    name: orders-batch
+    value: -100
+    description: "Batch workloads, lower priority than services"
+
+# --- Postgres (CNPG) ---
+postgres:
+  user: app
+  password: app
+  database: app
+  host: orders-postgres-rw
+  port: 5432
+  instances: 1
+  storage: 1Gi
+  priorityClassName: orders-critical
+  pdb:
+    enabled: true
+    minAvailable: 1
+  # Guaranteed QoS: requests == limits для cpu и memory
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 100m        # = requests → Guaranteed
+      memory: 256Mi    # = requests → Guaranteed
+
+# --- api ---
+api:
+  image: orders-api:pr6
+  pullPolicy: IfNotPresent
+  replicas: 1
+  flaky: "false"
+  v2:
+    enabled: true
+    replicas: 1
+    fail: "false"
+    weight: 100
+  healthFail: "false"
+  port: 8000
+  priorityClassName: orders-critical
+  pdb:
+    enabled: true
+    minAvailable: 1
+  # Guaranteed QoS: requests == limits для cpu и memory
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 200m         # = requests → Guaranteed
+      memory: 256Mi    # = requests → Guaranteed
+
+# --- worker ---
+worker:
+  image: orders-worker:monitoring-fixed
+  pullPolicy: IfNotPresent
+  replicas: 0
+  pollInterval: "1.0"
+  maxAttempts: 5
+  port: 8001
+  # worker не входит в задание (нет PDB/priority), оставляем Burstable
+  resources:
+    requests:
+      cpu: 13m
+      memory: 100Mi
+    limits:
+      memory: 100Mi
+
+# --- monitoring ---
+monitoring:
+  enabled: true
+  interval: 30s
+  scrapeTimeout: 10s
+  proxyInterval: 15s
+  rulesEnabled: true
+
+mesh:
+  enabled: true
+  clientEnabled: true
+  loadEnabled: false

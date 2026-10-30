@@ -1,0 +1,54 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.rulesEnabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "orders.fullname" . }}-mesh
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "orders.labels" . | nindent 4 }}
+    release: prometheus
+spec:
+  groups:
+    - name: orders.mesh.rules
+      rules:
+        - alert: OrdersCanaryHighErrorRate
+          expr: |
+            (
+              sum(rate(http_requests_total{namespace="{{ .Values.namespace }}",service="api-v2",version="v2",path="/order",status=~"5.."}[2m]))
+              /
+              clamp_min(sum(rate(http_requests_total{namespace="{{ .Values.namespace }}",service="api-v2",version="v2",path="/order"}[2m])), 0.001)
+            ) > 0.05
+            and
+            sum(rate(http_requests_total{namespace="{{ .Values.namespace }}",service="api-v2",version="v2",path="/order"}[2m])) > 0.1
+          for: 1m
+          labels:
+            severity: warning
+            service: api
+          annotations:
+            summary: "Canary v2 has over 5% order errors"
+            description: "v2 error rate stayed above the release gate threshold for one minute."
+        - alert: OrdersCanaryHighLatency
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le) (rate(http_request_duration_seconds_bucket{namespace="{{ .Values.namespace }}",service="api-v2",version="v2",path="/order"}[2m]))
+            ) > 0.5
+            and
+            sum(rate(http_requests_total{namespace="{{ .Values.namespace }}",service="api-v2",version="v2",path="/order"}[2m])) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+            service: api
+          annotations:
+            summary: "Canary v2 order p95 exceeds 500 ms"
+            description: "The canary is slower than the release gate allows under nontrivial load."
+        - alert: OrdersMeshUnencryptedTraffic
+          expr: |
+            sum(increase(request_total{namespace="{{ .Values.namespace }}",service="mesh-client-proxy",direction="outbound",dst_service=~"api-v1|api-v2",tls!="true"}[5m])) > 0
+          for: 1m
+          labels:
+            severity: critical
+            service: api
+          annotations:
+            summary: "Mesh client sent unencrypted traffic to API"
+            description: "At least one API request did not have Linkerd mTLS. Check injection and service identity."
+{{- end }}

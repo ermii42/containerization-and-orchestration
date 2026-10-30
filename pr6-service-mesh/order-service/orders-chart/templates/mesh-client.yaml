@@ -1,0 +1,33 @@
+{{- if .Values.mesh.clientEnabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mesh-client
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mesh-client
+  template:
+    metadata:
+      labels:
+        app: mesh-client
+      annotations:
+        linkerd.io/inject: "enabled"
+    spec:
+      containers:
+        - name: client
+          image: curlimages/curl:8.13.0
+          {{- if .Values.mesh.loadEnabled }}
+          command: ["sh", "-c", "while true; do curl -sS -o /dev/null -w '%{http_code}\n' -H 'Content-Type: application/json' -d '{\"payload\":{\"source\":\"mesh-client\"}}' http://api.orders.svc.cluster.local/order; sleep 0.1; done"]
+          {{- else }}
+          command: ["sh", "-c", "sleep 365d"]
+          {{- end }}
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+{{- end }}

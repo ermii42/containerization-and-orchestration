@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "orders.labels" . | nindent 4 }}
+    app: worker
+spec:
+  type: ClusterIP
+  selector:
+    app: worker
+    app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
+  ports:
+    - name: http
+      port: {{ .Values.worker.port }}
+      targetPort: http

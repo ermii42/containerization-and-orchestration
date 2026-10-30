@@ -1,0 +1,32 @@
+{
+  "dashboard": {
+    "uid": "pr6-canary-evidence",
+    "title": "Practice 6 / Canary rollout evidence",
+    "tags": ["pr6", "linkerd", "canary"],
+    "timezone": "utc",
+    "schemaVersion": 41,
+    "version": 0,
+    "refresh": "",
+    "time": {"from": "2026-10-30T19:06:00Z", "to": "2026-10-30T19:10:30Z"},
+    "panels": [
+      {
+        "id": 1, "title": "v2 backend error rate — bad release", "type": "timeseries",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 10},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "100 * (sum(rate(http_requests_total{namespace=\"orders\",service=\"api-v2\",version=\"v2\",path=\"/order\",status=~\"5..\"}[1m])) or vector(0)) / clamp_min(sum(rate(http_requests_total{namespace=\"orders\",service=\"api-v2\",version=\"v2\",path=\"/order\"}[1m])), 0.000001)", "legendFormat": "v2 5xx %", "range": true}],
+        "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "color": {"mode": "fixed", "fixedColor": "red"}}, "overrides": []},
+        "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}}
+      },
+      {
+        "id": 2, "title": "v2 share of backend order requests — promotion", "type": "timeseries",
+        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 10},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "100 * sum(rate(http_requests_total{namespace=\"orders\",service=\"api-v2\",version=\"v2\",path=\"/order\"}[1m])) / clamp_min(sum(rate(http_requests_total{namespace=\"orders\",service=\"api-v1\",version=\"v1\",path=\"/order\"}[1m])) + sum(rate(http_requests_total{namespace=\"orders\",service=\"api-v2\",version=\"v2\",path=\"/order\"}[1m])), 0.000001)", "legendFormat": "v2 backend share %", "range": true}],
+        "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "color": {"mode": "fixed", "fixedColor": "blue"}}, "overrides": []},
+        "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}}
+      }
+    ]
+  },
+  "overwrite": true,
+  "message": "Practice 6 historical canary evidence"
+}
