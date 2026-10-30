@@ -142,11 +142,16 @@ src/scripts/run-matrix.sh
 
 ## Часть 6 — Скрытая поломка и диагностика
 
-`src/scripts/inject-fault.py` уже запущен: он случайно меняет в `order-service/orders-chart/values.yaml` порт DNS, PostgreSQL или API либо метку клиента и обновляет Helm-релиз. Повторно запускать его при активной поломке не требуется. Ниже — диагностика текущего состояния; команды починки приведены отдельно и **не выполнялись**.
+Подготовим 3–4 варианта поломки:
+src/scripts/inject-fault.py случайно выбирает один из четырёх вариантов и меняет values.yaml: порт DNS, PostgreSQL или API либо метку клиента. Затем выполняет helm upgrade, не печатая тип поломки.
 
-### Диагностика: отдельные команды
+```bash
+python3 src/scripts/inject-fault.py
 
-Все команды выполняются из каталога `pr5-kubernetes-networking`. Сначала проверяем pod клиента и текущие значения сетевых политик:
+```
+
+### Диагностика:
+ Сначала проверяем pod клиента и текущие значения сетевых политик:
 
 ```bash
 kubectl -n orders get pod client --show-labels
@@ -154,35 +159,38 @@ kubectl -n orders get networkpolicy orders-allow-client -o jsonpath='{.spec.podS
 kubectl -n orders get networkpolicy orders-allow-api -o jsonpath='{.spec.ingress[0].from[0].podSelector.matchLabels.role}{"\n"}'
 grep -A8 '^# --- networking ---' order-service/orders-chart/values.yaml
 ```
+![alt text](image-5.png)
 
-Фактический результат: pod `client` имеет `role=client`, а селектор `orders-allow-client` и разрешённый источник `orders-allow-api` требуют `role=stranger`. В чарте задано `networkPolicy.clientLabel.role: stranger`. Порты API `8000`, PostgreSQL `5432` и DNS `53` остались правильными. Следовательно, случайная поломка — **подмена метки клиента**: нужный pod не выбирается правилом egress и не подходит под ingress API.
+pod `client` имеет `role=client`, а селектор `orders-allow-client` и разрешённый источник `orders-allow-api` требуют `role=stranger`. В чарте задано `networkPolicy.clientLabel.role: stranger`. Порты API `8000`, PostgreSQL `5432` и DNS `53` остались правильными. Следовательно, случайная поломка — **подмена метки клиента**: нужный pod не выбирается правилом egress и не подходит под ingress API.
 
 Если pod `client` работает, можно отдельно проверить DNS и TCP до Service. DNS должен разрешить имя, а TCP до API при этой поломке завершится тайм-аутом:
 
 ```bash
 kubectl -n orders exec client -- python3 -c 'import socket; print("dns-api", socket.gethostbyname("api.orders.svc.cluster.local")); socket.create_connection(("api.orders.svc.cluster.local", 80), timeout=3); print("tcp-api ok")'
 ```
-
-Сейчас `client` находится в фазе `Completed`, поэтому `kubectl exec` в него не работает. Для повторения пробы создайте временный pod с той же меткой; это только диагностическая проба, она не меняет политику:
+![alt text](image-6.png)
+Сейчас `client` находится в фазе `Completed`, поэтому `kubectl exec` в него не работает.
 
 ```bash
 kubectl -n orders run client-probe --image=ermii42/orders-api:monitoring --restart=Never --labels=role=client --command -- sleep 300
+
 kubectl -n orders wait --for=condition=Ready pod/client-probe --timeout=90s
+
 kubectl -n orders exec client-probe -- python3 -c 'import socket; print("dns-api", socket.gethostbyname("api.orders.svc.cluster.local")); socket.create_connection(("api.orders.svc.cluster.local", 80), timeout=3); print("tcp-api ok")'
 ```
-
-Отклонённый SYN можно найти в Hubble на ноде пробного pod. После просмотра удалите только пробный pod:
-
+Просмотрим дропнутые пакеты через Hubble
 ```bash
 CLIENT_NODE=$(kubectl -n orders get pod client-probe -o jsonpath='{.spec.nodeName}')
 CILIUM=$(kubectl -n kube-system get pod -l k8s-app=cilium --field-selector spec.nodeName="$CLIENT_NODE" -o jsonpath='{.items[0].metadata.name}')
+
 kubectl -n kube-system exec "$CILIUM" -c cilium-agent -- hubble observe --last 500 --verdict DROPPED --from-pod orders/client-probe | grep 'api-.*:8000'
+
 kubectl -n orders delete pod client-probe --wait=true
 ```
+![alt text](image-8.png)
+Ожидаемый признак — `EGRESS DENIED (TCP Flags: SYN)` или `Policy denied DROPPED` для потока `orders/client-probe -> orders/api:8000`. Он подтверждает блокировку политикой, а не ошибку DNS.
 
-Ожидаемый признак — `EGRESS DENIED (TCP Flags: SYN)` или `Policy denied DROPPED` для потока `orders/client-probe → orders/api:8000`. Он подтверждает блокировку политикой, а не ошибку DNS.
-
-### Команды для починки — не выполнялись
+### Команды для починки
 
 Скрипт хранит исходный `values.yaml` в `/tmp/pr5-orders-values-before-fault.yaml`. Его режим `--restore` возвращает исходные значения и выполняет `helm upgrade`. Выполнять следующую команду следует только когда потребуется снять поломку:
 
@@ -190,26 +198,16 @@ kubectl -n orders delete pod client-probe --wait=true
 python3 src/scripts/inject-fault.py --restore
 ```
 
-После восстановления проверьте метки правил, а затем TCP-доступность API из pod с `role=client`:
-
-```bash
-kubectl -n orders get networkpolicy orders-allow-client -o jsonpath='{.spec.podSelector.matchLabels.role}{"\n"}'
-kubectl -n orders get networkpolicy orders-allow-api -o jsonpath='{.spec.ingress[0].from[0].podSelector.matchLabels.role}{"\n"}'
-# Оба значения должны быть client.
-kubectl -n orders run client-probe --image=ermii42/orders-api:monitoring --restart=Never --labels=role=client --command -- sleep 300
-kubectl -n orders wait --for=condition=Ready pod/client-probe --timeout=90s
-kubectl -n orders exec client-probe -- python3 -c 'import socket; socket.create_connection(("api.orders.svc.cluster.local", 80), timeout=3); print("tcp-api ok")'
-kubectl -n orders delete pod client-probe --wait=true
-```
-
 ## Часть 7 — мониторинг и алерты
 
 Используем kube-prometheus-stack Лабы 2. 
-В Cilium включены метрики Hubble `dns`, `drop`, `tcp`, `flow` с метками namespace:
+В Cilium включим метрики Hubble `dns`, `drop`, `tcp`, `flow` с метками namespace:
 
 ```bash
 kubectl -n kube-system patch cm cilium-config --type merge -p '{"data":{"hubble-metrics":"dns:labelsContext=source_namespace,destination_namespace drop:labelsContext=source_namespace,destination_namespace tcp:labelsContext=source_namespace,destination_namespace flow:labelsContext=source_namespace,destination_namespace","hubble-metrics-server":":9965"}}'
+
 kubectl -n kube-system rollout restart ds/cilium
+
 kubectl -n kube-system rollout status ds/cilium --timeout=180s
 ```
 
@@ -224,34 +222,9 @@ kubectl -n kube-system rollout status ds/cilium --timeout=180s
 Пробы матрицы и DNS-поломка спровоцировали `OrdersConnectionDrops`. В Prometheus подтверждено `ALERTS{alertname="OrdersConnectionDrops",alertstate="firing"} = 1`; `up{namespace="orders"}` показал три API и два worker target со значением 1.
 
 ```bash
-kubectl -n monitoring port-forward svc/prometheus-kube-prometheus-prometheus 9090:9090
+kubectl -n monitoring port-forward svc/prometheus-kube-prometheus-prometheus 9090:9090 --address 0.0.0.0 
+
 curl -sG --data-urlencode 'query=ALERTS{alertname="OrdersConnectionDrops"}' http://127.0.0.1:9090/api/v1/query
-kubectl -n monitoring logs -l app.kubernetes.io/name=grafana -c grafana-sc-dashboard --tail=100 | grep network-dashboard
-kubectl -n monitoring port-forward svc/prometheus-grafana 3000:80
-# Во втором терминале: пароль читается из Secret только в переменную shell.
-grafana_pass=$(kubectl -n monitoring get secret prometheus-grafana -o jsonpath='{.data.admin-password}' | base64 -d)
-curl -u "admin:$grafana_pass" http://127.0.0.1:3000/api/dashboards/uid/orders-networking
-unset grafana_pass
 ```
 
 ![Дашборд Grafana](scripts/grafana-dashboard.png)
-
-Для получения PNG временно выполнялись команды:
-
-```bash
-helm upgrade prometheus prometheus-community/kube-prometheus-stack --version 92.13.1 -n monitoring -f /tmp/pr5-prometheus-values.yaml --set grafana.imageRenderer.enabled=true
-kubectl -n monitoring rollout status deploy/prometheus-grafana-image-renderer --timeout=180s
-kubectl -n monitoring port-forward svc/prometheus-grafana 3000:80
-# Во втором терминале, с переменной grafana_pass из блока выше:
-curl -L -u "admin:$grafana_pass" -o scripts/grafana-dashboard.png 'http://127.0.0.1:3000/render/d/orders-networking/orders-networking?orgId=1&width=1400&height=1000&from=now-1h&to=now'
-helm upgrade prometheus prometheus-community/kube-prometheus-stack --version 92.13.1 -n monitoring -f /tmp/pr5-prometheus-values.yaml
-```
-
-## Артефакты
-
-- Чарт: `networkpolicy.yaml`, `cilium-exceptions.yaml`, `servicemonitor.yaml`, `hubble-monitor.yaml`, `prometheusrule.yaml`, `grafana-dashboard.yaml`, `values.yaml`.
-- Скрипты: `chaos-pods.sh`, `load-client.py`, `plot-chaos.py`, `matrix-probe.py`, `run-matrix.sh`, `inject-fault.py`, `visualize-evidence.py`.
-- Измерения: [сеть pod](scripts/pod-network.svg), [график](scripts/chaos-final.svg), [нагрузка](scripts/load-final.csv), [удаления](scripts/chaos-final.csv), [матрица](scripts/matrix.csv), [визуальная матрица](scripts/matrix.svg), [Hubble](scripts/fault-hubble.txt), [схема отказа](scripts/fault-map.svg), [снимок Grafana](scripts/grafana-dashboard.png).
-
-
-Снимок Grafana сохранён как [grafana-dashboard.png](scripts/grafana-dashboard.png) (1400×1000): видны соединения TCP, policy drops, ответы DNS и три доступных API. Для снимка временно включался image renderer в том же стеке; после сохранения PNG исходная конфигурация мониторинга восстановлена. SVG матрицы и маршрута построены из фактических CSV/Hubble-данных и обозначены как визуализации.
