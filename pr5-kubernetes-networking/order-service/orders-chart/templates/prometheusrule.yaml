@@ -1,0 +1,35 @@
+{{- if .Values.monitoring.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: orders-networking
+  namespace: {{ .Values.namespace }}
+  labels:
+    release: {{ .Values.monitoring.releaseLabel }}
+    {{- include "orders.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: orders.networking
+      rules:
+        - alert: OrdersConnectionDrops
+          expr: sum(rate(hubble_drop_total{reason="POLICY_DENIED",source_namespace="orders"}[2m])) > 0
+          for: {{ .Values.monitoring.alertFor }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "Cilium blocked traffic originating in orders"
+        - alert: OrdersDNSFailures
+          expr: sum(rate(coredns_dns_responses_total{rcode=~"SERVFAIL|REFUSED"}[5m])) > 0
+          for: {{ .Values.monitoring.alertFor }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "DNS responses for orders contain errors"
+        - alert: OrdersAPIConnectionsLost
+          expr: (sum(up{namespace="orders",service="api"}) or vector(0)) == 0
+          for: {{ .Values.monitoring.alertFor }}
+          labels:
+            severity: critical
+          annotations:
+            summary: "No scrapeable API endpoints in orders"
+{{- end }}

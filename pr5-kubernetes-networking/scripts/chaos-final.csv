@@ -1,0 +1,9 @@
+timestamp,pod,ip,node
+2026-10-30T14:01:01Z,worker-5c67ddf558-hmz55,10.244.1.52,minikube
+2026-10-30T14:01:10Z,worker-5c67ddf558-pvkgd,10.244.1.219,minikube
+2026-10-30T14:01:18Z,api-74bcb7d7f-wfj5m,10.244.0.22,minikube-m02
+2026-10-30T14:01:26Z,worker-5c67ddf558-wmb9t,10.244.0.91,minikube-m02
+2026-10-30T14:01:34Z,worker-5c67ddf558-l66pr,10.244.0.179,minikube-m02
+2026-10-30T14:01:43Z,api-74bcb7d7f-c5qrb,10.244.1.25,minikube
+2026-10-30T14:01:51Z,worker-5c67ddf558-gwr2p,10.244.1.29,minikube
+2026-10-30T14:01:59Z,worker-5c67ddf558-c28np,10.244.0.93,minikube-m02

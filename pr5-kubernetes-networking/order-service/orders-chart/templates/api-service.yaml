@@ -7,12 +7,14 @@ metadata:
     {{- include "orders.labels" . | nindent 4 }}
     app: api
 spec:
-  type: NodePort
+  type: {{ .Values.api.service.type }}
   selector:
     app: api
     app.kubernetes.io/name: {{ index .Values.commonLabels "app.kubernetes.io/name" | quote }}
   ports:
     - name: http
-      port: 80
+      port: {{ .Values.api.service.port }}
       targetPort: http
-      nodePort: 30080
+      {{- if eq .Values.api.service.type "NodePort" }}
+      nodePort: {{ .Values.api.service.nodePort }}
+      {{- end }}

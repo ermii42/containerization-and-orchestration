@@ -53,6 +53,10 @@ api:
   replicas: 3
   healthFail: "false"
   port: 8000
+  service:
+    type: NodePort
+    port: 80
+    nodePort: 30080
   priorityClassName: orders-critical
   pdb:
     enabled: true
@@ -82,8 +86,33 @@ worker:
     limits:
       memory: 100Mi
 
-# --- monitoring ---
+# --- networking ---
+networkPolicy:
+  enabled: true
+  clientLabel:
+    role: client
+  apiPort: 8000
+  workerPort: 8001
+  postgresPort: 5432
+  dnsPort: 53
+  dnsNamespace: kube-system
+  dnsPodLabel:
+    k8s-app: kube-dns
+  monitoringNamespace: monitoring
+  monitoringPodLabel:
+    app.kubernetes.io/name: prometheus
+  # CNPG instance manager uses Kubernetes API and the operator calls its API.
+  kubernetesAPI:
+    port: 8443
+  cnpgOperatorNamespace: cnpg-system
+  cnpgOperatorPodLabel:
+    app.kubernetes.io/name: cloudnative-pg
+  cnpgInstancePort: 8000
+
+# --- observability (existing kube-prometheus-stack) ---
 monitoring:
   enabled: true
   interval: 30s
   scrapeTimeout: 10s
+  releaseLabel: prometheus
+  alertFor: 1m
