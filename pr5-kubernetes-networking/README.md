@@ -38,12 +38,12 @@ kubectl -n orders exec "$API" -- sh -c 'hostname -i; cat /sys/class/net/eth0/ifl
 
 minikube ssh -n minikube -- 'ip -o link'
 ```
-![alt text](image.png)
+![alt text](src/img/image.png)
 Проверим, что API может достучаться до Postgres по TCP
 ```
 kubectl -n orders exec "$API" -- python -c 'import socket,sys; socket.create_connection((sys.argv[1],5432),timeout=3); print("cross-node TCP OK")' "$PGIP"
 ```
-![alt text](image-1.png)
+![alt text](src/img/image-1.png)
 
 Cilium назначил `api-74bcb7d7f-xfzj6` IP `10.244.1.66` на ноде `minikube`. В pod `eth0` имеет `iflink=18`; на ноде интерфейс 18 — `lxc259d3fa69e98@if17`, парный конец veth.  CNI создаёт сетевое пространство, IP и veth, Cilium проводит межнодовой трафик через `cilium_vxlan`. IP pod меняется при пересоздании, поэтому клиенту нужен Service.
 
@@ -55,7 +55,7 @@ Cilium назначил `api-74bcb7d7f-xfzj6` IP `10.244.1.66` на ноде `mi
 ```
 curl http://192.168.49.2:30080/health
 ```
-![alt text](image-2.png)
+![alt text](src/img/image-2.png)
 NodePort открывает порт на нодах; LoadBalancer дополнительно получает внешний адрес балансировщика; headless Service (`clusterIP: None`) возвращает адреса endpoint и не балансирует через ClusterIP.
 
 Запустим скрипт, который в фоне раз в несколько секунд убивает случайный под api или worker — непрерывный хаос. Параллельно прогоним постоянную нагрузку клиента на сервис по имени через DNS:
@@ -108,7 +108,7 @@ kubectl -n orders get networkpolicy,ciliumnetworkpolicy
 
 curl -sS -o /dev/null -w '%{http_code}\n' http://192.168.49.2:30080/health
 ```
-![alt text](image-3.png)
+![alt text](src/img/image-3.png)
 
 Установлены шесть NetworkPolicy и две CiliumNetworkPolicy; обе Cilium-политики `VALID=True`. NodePort вернул 200. Hubble показывает `FORWARDED` для PostgreSQL -> `192.168.49.2:8443`.
 
@@ -159,7 +159,7 @@ kubectl -n orders get networkpolicy orders-allow-client -o jsonpath='{.spec.podS
 kubectl -n orders get networkpolicy orders-allow-api -o jsonpath='{.spec.ingress[0].from[0].podSelector.matchLabels.role}{"\n"}'
 grep -A8 '^# --- networking ---' order-service/orders-chart/values.yaml
 ```
-![alt text](image-5.png)
+![alt text](src/img/image-5.png)
 
 pod `client` имеет `role=client`, а селектор `orders-allow-client` и разрешённый источник `orders-allow-api` требуют `role=stranger`. В чарте задано `networkPolicy.clientLabel.role: stranger`. Порты API `8000`, PostgreSQL `5432` и DNS `53` остались правильными. Следовательно, случайная поломка — **подмена метки клиента**: нужный pod не выбирается правилом egress и не подходит под ingress API.
 
@@ -168,7 +168,7 @@ pod `client` имеет `role=client`, а селектор `orders-allow-client`
 ```bash
 kubectl -n orders exec client -- python3 -c 'import socket; print("dns-api", socket.gethostbyname("api.orders.svc.cluster.local")); socket.create_connection(("api.orders.svc.cluster.local", 80), timeout=3); print("tcp-api ok")'
 ```
-![alt text](image-6.png)
+![alt text](src/img/image-6.png)
 Сейчас `client` находится в фазе `Completed`, поэтому `kubectl exec` в него не работает.
 
 ```bash
@@ -187,7 +187,7 @@ kubectl -n kube-system exec "$CILIUM" -c cilium-agent -- hubble observe --last 5
 
 kubectl -n orders delete pod client-probe --wait=true
 ```
-![alt text](image-8.png)
+![alt text](src/img/image-8.png)
 Ожидаемый признак — `EGRESS DENIED (TCP Flags: SYN)` или `Policy denied DROPPED` для потока `orders/client-probe -> orders/api:8000`. Он подтверждает блокировку политикой, а не ошибку DNS.
 
 ### Команды для починки
@@ -213,18 +213,27 @@ kubectl -n kube-system rollout status ds/cilium --timeout=180s
 
 Чарт создаёт ServiceMonitor для API/worker и Hubble, PrometheusRule с тремя алертами и ConfigMap дашборда Grafana `Orders: network and DNS`. Дашборд показывает TCP SYN/с, policy drops/с, ответы CoreDNS/с и число доступных целей API. Для DNS используется `coredns_dns_responses_total`: при L4-политике Hubble не видит содержимое DNS-ответа, а CoreDNS уже собирается стеком Лабы 2. Sidecar Grafana загрузил `network-dashboard.json`; Grafana API вернул HTTP 200 и заголовок `Orders: network and DNS` по UID `orders-networking`.
 
+![Дашборд Grafana](src/img/grafana-dashboard.png)
+
 | Алерт | Условие | Зачем |
 |---|---|---|
 | `OrdersConnectionDrops` | `rate(hubble_drop_total{reason="POLICY_DENIED",source_namespace="orders"}[2m]) > 0` на протяжении 1 мин | увидеть заблокированные соединения, включая преднамеренные отрицательные пробы |
 | `OrdersDNSFailures` | `rate(coredns_dns_responses_total{rcode=~"SERVFAIL|REFUSED"}[5m]) > 0` на протяжении 1 мин | заметить сбой разрешения имён |
 | `OrdersAPIConnectionsLost` | нет доступных Prometheus target API на протяжении 1 мин | заметить потерю всех endpoint API или недоступность метрик |
 
-Пробы матрицы и DNS-поломка спровоцировали `OrdersConnectionDrops`. В Prometheus подтверждено `ALERTS{alertname="OrdersConnectionDrops",alertstate="firing"} = 1`; `up{namespace="orders"}` показал три API и два worker target со значением 1.
 
+Cпровоцируем срабатывание `OrdersConnectionDrops`
+
+```bash
+kubectl -n orders run alert-drops-generator --image=ermii42/orders-api:monitoring --restart=Never --labels=role=stranger --command -- sh -c 'while true; do python3 -c "import socket; socket.create_connection((\"api.orders.svc.cluster.local\", 80), timeout=1)" >/dev/null 2>&1; sleep 1; done'
+```
+Посмотрим алерт:
 ```bash
 kubectl -n monitoring port-forward svc/prometheus-kube-prometheus-prometheus 9090:9090 --address 0.0.0.0 
 
 curl -sG --data-urlencode 'query=ALERTS{alertname="OrdersConnectionDrops"}' http://127.0.0.1:9090/api/v1/query
 ```
+![alt text](src/img/image-9.png)
 
-![Дашборд Grafana](scripts/grafana-dashboard.png)
+
+
