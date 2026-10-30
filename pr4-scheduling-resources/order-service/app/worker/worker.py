@@ -74,7 +74,7 @@ async def _metrics(request: web.Request) -> web.Response:
         WORKER_UP.set(1)
     except Exception:
         WORKER_UP.set(0)
-    return web.Response(body=generate_latest(), content_type=CONTENT_TYPE_LATEST)
+    return web.Response(body=generate_latest(), headers={"Content-Type": CONTENT_TYPE_LATEST})
 
 
 async def start_http(pool: AsyncConnectionPool) -> web.AppRunner:

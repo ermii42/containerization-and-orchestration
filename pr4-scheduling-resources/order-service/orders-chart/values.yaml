@@ -68,7 +68,7 @@ api:
 
 # --- worker ---
 worker:
-  image: ermii42/orders-worker:monitoring
+  image: orders-worker:monitoring-fixed
   pullPolicy: IfNotPresent
   replicas: 2
   pollInterval: "1.0"

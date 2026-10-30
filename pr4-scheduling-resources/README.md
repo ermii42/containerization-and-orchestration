@@ -211,32 +211,76 @@ kubectl get events -n orders --field-selector reason=Preempted --sort-by='.lastT
 ![alt text](image-10.png)
 ## Часть 8 — Докажи SLA под нагрузкой
 
-Параллельно с Частями 6–7 гони `k6`/`hey` по пути заказа, снимай графики задержки и ошибок. Сформулируй свой SLA (например, «95% заказов быстрее 300 мс даже под перегрузкой») и покажи графиками, что он держится, а деградирует именно `batch`.
+**SLA для этого опыта:** при восьми параллельных клиентах и конкуренции с шестью `batch`-репликами не менее 95% запросов `POST /order` завершаются за 300 мс, а доля HTTP 5xx равна нулю. Это проверка конкретной нагрузки и двухнодового учебного кластера, а не гарантия для любого потока запросов.
+
+В **первом терминале** запустим нагрузку на 100 секунд:
+
+```bash
+hey -z 100s -c 8 -m POST -H 'Content-Type: application/json' \
+  -d '{"payload":{"sku":"sla-pressure","qty":1}}' \
+  "http://$(minikube ip):30080/order" | tee /tmp/orders-sla-pressure.txt
+```
+
+Во **втором терминале**, пока `hey` работает, увеличим фоновую нагрузку и наблюдаем за доступностью. Значение 6 только для эксперимента; в `values.yaml` остаётся штатное значение 2.
+
+```bash
+helm upgrade orders ./orders-chart -n orders --set batch.replicas=6
+kubectl get deploy -n orders api batch
+kubectl get events -n orders --field-selector reason=Evicted \
+  --sort-by=.metadata.creationTimestamp
+```
+
+`hey` выполнил 6516 запросов за 100,08 с (65,11 запросов/с), все ответы `201`; p95 = **201,8 мс**, p99 = 298,7 мс. На пике `api` оставался **3/3 Available**, а `batch` — **1/6 Available**. В событиях появились новые `Evicted` для `batch`; например, под `batch-699b4bcdcf-xr5fl` был вытеснен при потреблении 1030928 Ki и request 300 Mi. 
+Так сервис заказа выдержал заданный SLA, а фоновая нагрузка потеряла ёмкость.
+
+![Задержка p95, ошибки и доступные реплики во время опыта](sla-pressure.svg)
+
+График построен из `Prometheus /api/v1/query_range` с шагом 15 секунд. У серии 5xx нет значений, потому что ошибок не было; нулевая линия подтверждена распределением кодов `hey` (6516 ответов `201`). 
+
+
+Для повторной проверки в Grafana откройте дашборд **Orders SLA under load** или выполните запросы PromQL:
+
+```promql
+histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{namespace="orders",job="api",method="POST",path="/order"}[2m])))
+(sum(rate(http_requests_total{namespace="orders",job="api",path="/order",status=~"5.."}[2m])) / clamp_min(sum(rate(http_requests_total{namespace="orders",job="api",path="/order"}[2m])), 0.001)) or vector(0)
+kube_deployment_status_replicas_available{namespace="orders",deployment=~"api|batch"}
+kube_deployment_spec_replicas{namespace="orders",deployment="batch"}
+```
+
+После опыта восстановим штатную конфигурацию и проверим её:
+
+```bash
+helm upgrade orders ./orders-chart -n orders --wait --timeout 5m
+kubectl get deploy -n orders api batch
+```
 
 ## Часть 9 — Мониторинг
 
-Добавь в чарт шаблоны `ServiceMonitor`/`PrometheusRule`, используя стек из Лабы 2. Заложи 3 алерта, обоснуй каждый в README. Спровоцируй срабатывание хотя бы одного, покажи в состоянии firing.
+В чарт добавлены `ServiceMonitor` для `api` и `worker`, `PrometheusRule` с тремя алертами и ConfigMap с JSON-дашбордом Grafana. Prometheus из Лабы 2 выбирает `ServiceMonitor` из namespace `orders` и правила с меткой `release: prometheus`.
 
-## Результат
+В `values.yaml` указан `orders-worker:monitoring-fixed`. После пересоздания Minikube образ нужно собрать снова перед `helm upgrade`.
 
-- реплики `api` доказуемо разнесены по нодам, даже при кластере на 1-2 ноды;
-- requests/limits критического пути взяты из рекомендаций `krr`, не с потолка;
-- у всех подов, включая `batch`, есть лимиты — гвардрейлы Лабы 3 без исключений;
-- `Pending` и preemption под нехваткой ресурсов — увидены и объяснены;
-- eviction под давлением по памяти жертвует `batch` первым за счёт QoS/приоритета, а не отсутствия лимитов;
-- SLA на пути заказа держится под перегрузкой, подтверждено графиками;
-- дашборд и 3 алерта поверх стека Лабы 2, встроенные в чарт.
+| Алерт | Условие и выдержка | Зачем нужен |
+|---|---|---|
+| `OrdersApiUnavailable` | Ни одного доступного API target в Prometheus в течение 1 минуты | Потеря всего пути оформления заказов требует немедленной реакции. |
+| `OrdersApiHighErrorRate` | Доля HTTP 5xx для `/order` выше 5% в течение 2 минут | Улавливает функциональную деградацию, даже когда поды формально Running. |
+| `OrdersBatchDegraded` | Available-реплик `batch` меньше желаемого числа 1 минуту | Показывает, что фоновая работа уступила ресурсы критическому пути. |
 
-## Что сдать
+Дашборд создаётся через Helm: шаблон `templates/grafana-dashboard.yaml` помещает `files/orders-sla.json` в ConfigMap с меткой `grafana_dashboard: "1"`. Sidecar установленного `kube-prometheus-stack` автоматически подхватывает ConfigMap во всех namespace. На дашборде есть p95 задержки, доля 5xx, доступные API-реплики и доступные/желаемые batch-реплики. 
+Открыть Grafana можно через:
 
-- Код `batch` с Dockerfile (реализация любая, на оценку не влияет).
-- Обновлённый Helm-чарт `shop`: шаблон `batch`, `priorityClass`, `PodDisruptionBudget`, `ServiceMonitor`/`PrometheusRule`, финальный `values.yaml`.
-- Отчёт `krr` (рекомендации) и сравнение с изначальной догадкой.
-- `README.md`: выбор механизма разнесения (Часть 1); рекомендации `krr` vs догадка (Часть 3); доказательство разнесения (Часть 4); настройка приоритетов/QoS/PDB и разница Burstable/Guaranteed (Часть 5); что показали `Pending`/preemption (Часть 6); что показал eviction (Часть 7); SLA и графики (Часть 8); 3 алерта и обоснование (Часть 9).
-- Скриншоты: реплики на разных нодах; отчёт `krr`; поды в `Pending`; момент preemption; момент eviction; графики задержки/ошибок под нагрузкой; дашборд.
+```
+kubectl -n monitoring port-forward svc/prometheus-grafana 3000:80
+```
+Затем открыть http://localhost:3000/d/orders-sla-lab4/orders-sla-under-load
 
-## Как начать
+Для проверки алерта повторим нагрузку на `batch` из Части 8 и подождём дольше минуты плюс интервал оценки Prometheus. Затем пробросим порт Prometheus и запросим состояние:
 
-Открой репозиторий с AI-ассистентом и попроси помочь с Лабой 4. Сгенерируй `batch` (Часть 0), дальше иди по порядку с Части 1. Ассистент ведёт по шагам и проверяет понимание, готовые политики, шаблоны чарта и рекомендации не выдаёт.
+```bash
+kubectl -n monitoring port-forward svc/prometheus-kube-prometheus-prometheus 19090:9090
+# В другом терминале:
+curl -sG --data-urlencode 'query=ALERTS{alertname="OrdersBatchDegraded"}' \
+  http://127.0.0.1:19090/api/v1/query
+```
 
-> Пользуешься AI? Проверь, что ассистент следует правилам из [`AGENTS.md`](../AGENTS.md). Большинство инструментов подхватывают его сами; если нет — укажи ему на этот файл.
+В этом опыте ответ содержал `"alertname":"OrdersBatchDegraded","alertstate":"firing","deployment":"batch","namespace":"orders"` при `api` 3/3 и `batch` 1/6. После проверки вернём `batch.replicas=2` командой `helm upgrade orders ./orders-chart -n orders --wait --timeout 5m`.

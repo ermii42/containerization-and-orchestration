@@ -1,7 +1,4 @@
 {{- if .Values.monitoring.enabled }}
-{{- $labelsInstance := "{{ $labels.instance }}" }}
-{{- $valueHumanize := "{{ $value | humanizePercentage }}" }}
-{{- $value := "{{ $value }}" }}
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -12,39 +9,35 @@ metadata:
     release: prometheus
 spec:
   groups:
-    - name: orders.api.rules
+    - name: orders.sla.rules
       rules:
-        - alert: OrdersApiDown
-          expr: up{job="api", namespace="{{ .Values.namespace }}"} == 0
+        - alert: OrdersApiUnavailable
+          expr: (sum(up{namespace="{{ .Values.namespace }}",service="api"}) or vector(0)) < 1
           for: 1m
           labels:
             severity: critical
           annotations:
-            summary: "Orders API is down"
-            description: "API instance {{ $labelsInstance }} has been unreachable for >1m."
-
+            summary: "Orders API has no scrapeable instances"
+            description: "No API instance has been reachable by Prometheus for one minute."
         - alert: OrdersApiHighErrorRate
           expr: |
-            sum(rate(http_requests_total{job="api", namespace="{{ .Values.namespace }}", status=~"5.."}[5m]))
-            /
-            sum(rate(http_requests_total{job="api", namespace="{{ .Values.namespace }}"}[5m]))
-            > 0.05
-          for: 5m
+            sum(rate(http_requests_total{namespace="{{ .Values.namespace }}",job="api",path="/order",status=~"5.."}[2m]))
+            / clamp_min(sum(rate(http_requests_total{namespace="{{ .Values.namespace }}",job="api",path="/order"}[2m])), 0.001) > 0.05
+          for: 2m
           labels:
             severity: warning
           annotations:
-            summary: "High 5xx error rate on Orders API"
-            description: "Error rate is {{ $valueHumanize }} for the last 5m."
-
-        - alert: OrdersWorkerProcessingStalled
+            summary: "More than 5% of order requests return 5xx"
+            description: "The order creation error ratio exceeded 5% for two minutes."
+        - alert: OrdersBatchDegraded
           expr: |
-            rate(orders_processed_total{job="worker", namespace="{{ .Values.namespace }}"}[10m]) == 0
-            and
-            (orders_queue_size{job="api", namespace="{{ .Values.namespace }}"} > 0 or up{job="worker", namespace="{{ .Values.namespace }}"} == 0)
-          for: 10m
+            kube_deployment_status_replicas_available{namespace="{{ .Values.namespace }}",deployment="batch"}
+            < on(namespace,deployment)
+            kube_deployment_spec_replicas{namespace="{{ .Values.namespace }}",deployment="batch"}
+          for: 1m
           labels:
             severity: warning
           annotations:
-            summary: "Worker is not processing orders"
-            description: "No orders processed in 10m. Queue size: {{ $value }}."
+            summary: "Batch capacity is degraded"
+            description: "Available batch replicas remain below the desired count for one minute."
 {{- end }}
