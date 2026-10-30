@@ -1,0 +1,13 @@
+{{- if .Values.monitoring.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orders-network-dashboard
+  namespace: {{ .Values.namespace }}
+  labels:
+    grafana_dashboard: "1"
+    {{- include "orders.labels" . | nindent 4 }}
+data:
+  network-dashboard.json: |-
+    {{- .Files.Get "files/network-dashboard.json" | nindent 4 }}
+{{- end }}

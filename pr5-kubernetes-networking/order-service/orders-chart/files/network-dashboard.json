@@ -1,0 +1,14 @@
+{
+  "uid": "orders-networking",
+  "title": "Orders: network and DNS",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {"id": 1, "title": "TCP connections (SYN/s)", "type": "timeseries", "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8}, "targets": [{"expr": "sum(rate(hubble_tcp_flags_total{flag=\"SYN\",source_namespace=\"orders\"}[2m]))", "legendFormat": "orders SYN/s"}]},
+    {"id": 2, "title": "Policy drops/s", "type": "timeseries", "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8}, "targets": [{"expr": "sum by (reason) (rate(hubble_drop_total{source_namespace=\"orders\"}[2m]))", "legendFormat": "{{reason}}"}]},
+    {"id": 3, "title": "DNS responses/s", "type": "timeseries", "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8}, "targets": [{"expr": "sum by (rcode) (rate(coredns_dns_responses_total[2m]))", "legendFormat": "{{rcode}}"}]},
+    {"id": 4, "title": "Orders API targets", "type": "stat", "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8}, "targets": [{"expr": "sum(up{namespace=\"orders\",service=\"api\"})", "legendFormat": "up"}]}
+  ]
+}

@@ -1,0 +1,118 @@
+namespace: orders
+
+commonLabels:
+  app.kubernetes.io/name: orders
+  app.kubernetes.io/part-of: orders
+  app.kubernetes.io/managed-by: helm
+
+# --- scheduling ---
+# strategy: podAntiAffinity | topologySpread
+scheduling:
+  strategy: topologySpread
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+
+# --- PriorityClass ---
+priorityClasses:
+  critical:
+    name: orders-critical
+    value: 1000000
+    description: "Critical revenue-path services (api, postgres)"
+  batch:
+    name: orders-batch
+    value: -100
+    description: "Batch workloads, lower priority than services"
+
+# --- Postgres (CNPG) ---
+postgres:
+  user: app
+  password: app
+  database: app
+  host: orders-postgres-rw
+  port: 5432
+  instances: 1
+  storage: 1Gi
+  priorityClassName: orders-critical
+  pdb:
+    enabled: true
+    minAvailable: 1
+  # Guaranteed QoS: requests == limits для cpu и memory
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 100m        # = requests → Guaranteed
+      memory: 256Mi    # = requests → Guaranteed
+
+# --- api ---
+api:
+  image: ermii42/orders-api:monitoring
+  pullPolicy: IfNotPresent
+  replicas: 3
+  healthFail: "false"
+  port: 8000
+  service:
+    type: NodePort
+    port: 80
+    nodePort: 30080
+  priorityClassName: orders-critical
+  pdb:
+    enabled: true
+    minAvailable: 2
+  # Guaranteed QoS: requests == limits для cpu и memory
+  resources:
+    requests:
+      cpu: 57m
+      memory: 100Mi
+    limits:
+      cpu: 57m         # = requests → Guaranteed
+      memory: 100Mi    # = requests → Guaranteed
+
+# --- worker ---
+worker:
+  image: orders-worker:monitoring-fixed
+  pullPolicy: IfNotPresent
+  replicas: 2
+  pollInterval: "1.0"
+  maxAttempts: 5
+  port: 8001
+  # worker не входит в задание (нет PDB/priority), оставляем Burstable
+  resources:
+    requests:
+      cpu: 13m
+      memory: 100Mi
+    limits:
+      memory: 100Mi
+
+# --- networking ---
+networkPolicy:
+  enabled: true
+  clientLabel:
+    role: client
+  apiPort: 8000
+  workerPort: 8001
+  postgresPort: 5432
+  dnsPort: 53
+  dnsNamespace: kube-system
+  dnsPodLabel:
+    k8s-app: kube-dns
+  monitoringNamespace: monitoring
+  monitoringPodLabel:
+    app.kubernetes.io/name: prometheus
+  # CNPG instance manager uses Kubernetes API and the operator calls its API.
+  kubernetesAPI:
+    port: 8443
+  cnpgOperatorNamespace: cnpg-system
+  cnpgOperatorPodLabel:
+    app.kubernetes.io/name: cloudnative-pg
+  cnpgInstancePort: 8000
+
+# --- observability (existing kube-prometheus-stack) ---
+monitoring:
+  enabled: true
+  interval: 30s
+  scrapeTimeout: 10s
+  releaseLabel: prometheus
+  alertFor: 1m

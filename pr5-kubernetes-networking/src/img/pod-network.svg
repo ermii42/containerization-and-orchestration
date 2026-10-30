@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="255" viewBox="0 0 980 255">
+<rect width="980" height="255" fill="white"/>
+<style>text{font:16px sans-serif;fill:#173044}.title{font:bold 22px sans-serif}.link{stroke:#2774be;stroke-width:5}</style>
+<text class="title" x="24" y="35">Сеть pod api в Cilium</text>
+<rect x="25" y="70" width="345" height="135" rx="14" fill="#d8ecff"/>
+<text x="48" y="105">pod api-74bcb7d7f-xfzj6</text>
+<text x="48" y="138">eth0: 10.244.1.66</text>
+<text x="48" y="170">iflink = 18</text>
+<line class="link" x1="370" y1="137" x2="610" y2="137"/>
+<text x="435" y="115">veth-пара</text>
+<rect x="610" y="70" width="345" height="135" rx="14" fill="#e5f3e7"/>
+<text x="632" y="105">нода minikube</text>
+<text x="632" y="138">18: lxc259d3fa69e98@if17</text>
+<text x="632" y="170">межнодовой путь: cilium_vxlan</text>
+<text x="25" y="235">Проверено: kubectl exec cat /sys/class/net/eth0/iflink и minikube ssh ip -o link</text>
+</svg>

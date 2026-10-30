@@ -1,0 +1,8 @@
+Oct 30 13:51:51.329: orders/client:39565 (ID:10975) <> kube-system/coredns-559f6c778d-mw5mn:53 (ID:16825) policy-verdict:none EGRESS DENIED (UDP)
+Oct 30 13:51:51.329: orders/client:39565 (ID:10975) <> kube-system/coredns-559f6c778d-mw5mn:53 (ID:16825) Policy denied DROPPED (UDP)
+Oct 30 13:51:51.329: orders/client:39565 (ID:10975) <> kube-system/coredns-559f6c778d-mw5mn:53 (ID:16825) policy-verdict:none EGRESS DENIED (UDP)
+Oct 30 13:51:51.329: orders/client:39565 (ID:10975) <> kube-system/coredns-559f6c778d-mw5mn:53 (ID:16825) Policy denied DROPPED (UDP)
+Oct 30 13:51:56.332: orders/client:39565 (ID:10975) <> kube-system/coredns-559f6c778d-mw5mn:53 (ID:16825) policy-verdict:none EGRESS DENIED (UDP)
+Oct 30 13:51:56.332: orders/client:39565 (ID:10975) <> kube-system/coredns-559f6c778d-mw5mn:53 (ID:16825) Policy denied DROPPED (UDP)
+Oct 30 13:51:56.332: orders/client:39565 (ID:10975) <> kube-system/coredns-559f6c778d-mw5mn:53 (ID:16825) policy-verdict:none EGRESS DENIED (UDP)
+Oct 30 13:51:56.332: orders/client:39565 (ID:10975) <> kube-system/coredns-559f6c778d-mw5mn:53 (ID:16825) Policy denied DROPPED (UDP)

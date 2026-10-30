@@ -1,0 +1,6 @@
+Oct 30 16:48:54.274: orders/client:48024 (ID:26381) <> orders/api-74bcb7d7f-5rx6j:8000 (ID:13215) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+Oct 30 16:48:54.274: orders/client:48024 (ID:26381) <> orders/api-74bcb7d7f-5rx6j:8000 (ID:13215) Policy denied DROPPED (TCP Flags: SYN)
+Oct 30 16:48:55.315: orders/client:48024 (ID:26381) <> orders/api-74bcb7d7f-5rx6j:8000 (ID:13215) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+Oct 30 16:48:55.315: orders/client:48024 (ID:26381) <> orders/api-74bcb7d7f-5rx6j:8000 (ID:13215) Policy denied DROPPED (TCP Flags: SYN)
+Oct 30 16:48:56.339: orders/client:48024 (ID:26381) <> orders/api-74bcb7d7f-5rx6j:8000 (ID:13215) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+Oct 30 16:48:56.339: orders/client:48024 (ID:26381) <> orders/api-74bcb7d7f-5rx6j:8000 (ID:13215) Policy denied DROPPED (TCP Flags: SYN)

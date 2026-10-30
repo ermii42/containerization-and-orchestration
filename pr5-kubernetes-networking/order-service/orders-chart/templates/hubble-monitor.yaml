@@ -1,0 +1,36 @@
+{{- if .Values.monitoring.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders-hubble-metrics
+  namespace: kube-system
+  labels:
+    app: orders-hubble-metrics
+spec:
+  clusterIP: None
+  selector:
+    k8s-app: cilium
+  ports:
+    - name: metrics
+      port: 9965
+      targetPort: 9965
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: orders-hubble
+  namespace: {{ .Values.namespace }}
+  labels:
+    release: {{ .Values.monitoring.releaseLabel }}
+spec:
+  namespaceSelector:
+    matchNames: [kube-system]
+  selector:
+    matchLabels:
+      app: orders-hubble-metrics
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.monitoring.interval }}
+      scrapeTimeout: {{ .Values.monitoring.scrapeTimeout }}
+{{- end }}
